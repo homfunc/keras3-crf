@@ -35,9 +35,11 @@ opt.apply_gradients(zip(tape.gradient(loss, crf.trainable_variables), crf.traina
 ```
 
 Notes
-- Designed for eager mode. Building Functional graphs with KerasTensors is not the target.
-- Left-padding masks are not supported; right-padding masks are supported via sequence lengths.
-- For single-timestep sequences (time == 1), decode and loss follow the simplified code path (argmax and unary log-sum-exp).
+- Backend-agnostic via Keras 3 universal ops: runs with TensorFlow, Torch, or JAX backends.
+- Eager-first. Validated primarily in eager mode; works with Keras Model/fit across backends. TF graph mode (tf.function) is supported only for the legacy TF ops in `keras_crf.text`.
+- Masking requires right-padding (ones for valid timesteps followed by zeros). Left-padding is not supported.
+- Decode padding: positions beyond the true sequence length are deterministically filled by copying the last valid tag.
+- Single-timestep sequences (time == 1): decode is argmax at t=0; log-likelihood reduces to the unary term minus logsumexp.
 
 Backend independence
 - Core ops and the CRF layer now use Keras 3 universal ops and are backend-agnostic (TensorFlow, PyTorch, JAX).
