@@ -31,6 +31,11 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Testing and linting dependencies (not required at runtime)
+test = [
+  "pytest>=8.0.0",
+]
+# Optional backend dependencies
 tf = [
   "tensorflow>=2.15",
 ]

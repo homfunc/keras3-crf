@@ -25,9 +25,9 @@ jobs:
       - name: Upgrade pip
         run: python -m pip install -U pip
 
-      - name: Install package and backend
+      - name: Install package, test deps, and backend
         run: |
-          pip install -e .
+          pip install -e .[test]
           if [ "${{ matrix.backend }}" = "tensorflow" ]; then
             pip install .[tf]
           elif [ "${{ matrix.backend }}" = "torch" ]; then
