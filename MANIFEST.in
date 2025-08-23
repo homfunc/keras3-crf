@@ -1,5 +1,7 @@
 include README.md
 include pyproject.toml
+include LICENSE
+include NOTICE
 recursive-include src/keras_crf *.py
 prune tests
 prune keras_crf/tests
