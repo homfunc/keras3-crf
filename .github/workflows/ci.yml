@@ -46,6 +46,10 @@ jobs:
         env:
           KERAS_BACKEND: tensorflow
         run: pytest -q tests
+      - name: Run tf_keras_crf tests
+        env:
+          KERAS_BACKEND: tensorflow
+        run: pytest -q tf_keras_crf/tests
       - name: Quickstart smoke (tf)
         env:
           KERAS_BACKEND: tensorflow
