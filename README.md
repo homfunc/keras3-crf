@@ -52,6 +52,7 @@ Backend independence
 - TensorFlow-specific ops and layer live in the separate tf_keras_crf package. Install tf-keras-crf and import `tf_keras_crf.text` and `tf_keras_crf.CRF` if you need TF-native behavior.
 
 Installation
+- Python >= 3.10 supported.
 - From PyPI: pip install keras3-crf
 - From source (editable): pip install -e .
 
