@@ -8,8 +8,7 @@ from keras_crf import CRF as KerasCoreCRF
 
 # Optional compatibility against TensorFlow implementation if tf_keras_crf is installed
 try:
-    import tf_keras_crf
-    import tensorflow as tf  # only used if tf_keras_crf is present
+    import tf_keras_crf  # noqa: F401
     HAS_TF_KERAS_CRF = True
 except Exception:
     HAS_TF_KERAS_CRF = False
@@ -25,7 +24,8 @@ def test_ops_compatibility_ll_and_decode():
 
     if not HAS_TF_KERAS_CRF:
         pytest.skip("tf_keras_crf not installed; skipping compatibility comparison")
-    # TF ops path via tf_keras_crf
+    # TF ops path via tf_keras_crf (import tensorflow within the block)
+    import tensorflow as tf
     potentials_tf = tf.convert_to_tensor(potentials_np)
     tags_tf = tf.convert_to_tensor(tags_np)
     lens_tf = tf.convert_to_tensor(lens_np)

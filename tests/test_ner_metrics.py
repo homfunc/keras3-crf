@@ -1,5 +1,5 @@
 import pytest
-pytest.importorskip("tensorflow")
+# Backend-agnostic metric; no TF import required
 import numpy as np
 import sys, os
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))

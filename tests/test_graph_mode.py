@@ -1,6 +1,6 @@
 # This test is TF graph-mode specific and belongs in tf_keras_crf.
 import pytest
-pytest.skip("TF graph-mode tests moved to tf_keras_crf; skipping in backend-agnostic package", allow_module_level=True)
+pytest.skip("TF graph-mode tests moved to tf_keras_crf; skipping here", allow_module_level=True)
 
 
 def get_basic_data():
