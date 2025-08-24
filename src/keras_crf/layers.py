@@ -1,144 +1,93 @@
-# Standalone CRF Layer adapted from TensorFlow Addons
+# Keras Core (backend-independent) CRF Layer
+import numpy as np
+import keras
+from keras import ops as K
+from keras.layers import Layer, Dense
 from typing import Optional
 
-import tensorflow as tf
-from typeguard import typechecked
-
-from .utils.types import Initializer
-from . import core_kops as kops
+from .crf_ops import crf_log_likelihood as k_crf_ll, crf_decode as k_crf_decode
 
 
-@tf.keras.utils.register_keras_serializable(package="KerasCRF")
-class CRF(tf.keras.layers.Layer):
-    @typechecked
-    def __init__(
-        self,
-        units: int,
-        chain_initializer: Initializer = "orthogonal",
-        use_boundary: bool = True,
-        boundary_initializer: Initializer = "zeros",
-        use_kernel: bool = True,
-        **kwargs,
-    ):
+@keras.utils.register_keras_serializable(package="Keras3CRF")
+class CRF(Layer):
+    def __init__(self, units: int, use_boundary: bool = True, use_kernel: bool = True, **kwargs):
         super().__init__(**kwargs)
         self.supports_masking = True
         self.units = units
         self.use_boundary = use_boundary
         self.use_kernel = use_kernel
-        self.chain_initializer = tf.keras.initializers.get(chain_initializer)
-        self.boundary_initializer = tf.keras.initializers.get(boundary_initializer)
-
-        self.chain_kernel = self.add_weight(
-            shape=(self.units, self.units), name="chain_kernel", initializer=self.chain_initializer
-        )
-
-        if self.use_boundary:
-            self.left_boundary = self.add_weight(
-                shape=(self.units,), name="left_boundary", initializer=self.boundary_initializer
-            )
-            self.right_boundary = self.add_weight(
-                shape=(self.units,), name="right_boundary", initializer=self.boundary_initializer
-            )
-
         if self.use_kernel:
-            self._dense_layer = tf.keras.layers.Dense(units=self.units, dtype=self.dtype)
+            self.proj = Dense(units)
         else:
-            self._dense_layer = lambda x: tf.cast(x, dtype=self.dtype)
+            self.proj = None
 
-    def call(self, inputs, mask: Optional[tf.Tensor] = None):
-        if mask is not None and tf.keras.backend.ndim(mask) != 2:
-            raise ValueError("Input mask to CRF must have dim 2 if not None")
-
-        if mask is not None:
-            left_boundary_mask = self._compute_mask_left_boundary(mask)
-            first_mask = left_boundary_mask[:, 0]
-            if first_mask is not None and tf.executing_eagerly():
-                no_left_padding = tf.math.reduce_all(first_mask)
-                if not bool(no_left_padding.numpy()):
-                    raise NotImplementedError("Currently, CRF layer do not support left padding")
-
-        potentials = self._dense_layer(inputs)
-
+    def build(self, input_shape):
+        self.trans = self.add_weight(shape=(self.units, self.units), name="transitions", initializer="glorot_uniform")
         if self.use_boundary:
-            potentials = self.add_boundary_energy(potentials, mask, self.left_boundary, self.right_boundary)
+            self.left_boundary = self.add_weight(shape=(self.units,), name="left_boundary", initializer="zeros")
+            self.right_boundary = self.add_weight(shape=(self.units,), name="right_boundary", initializer="zeros")
+        super().build(input_shape)
 
-        sequence_length = self._get_sequence_length(inputs, mask)
-        decoded_sequence, _ = self.get_viterbi_decoding(potentials, sequence_length)
-        return (decoded_sequence, potentials, sequence_length, self.chain_kernel)
-
-    def _get_sequence_length(self, input_, mask):
+    def call(self, inputs, mask: Optional[keras.KerasTensor] = None):
+        # Disallow left-padding masks for simplicity and parity with TF layer
         if mask is not None:
-            sequence_length = self.mask_to_sequence_length(mask)
-        else:
-            input_energy_shape = tf.shape(input_)
-            raw_input_shape = tf.slice(input_energy_shape, [0], [2])
-            alt_mask = tf.ones(raw_input_shape)
-            sequence_length = self.mask_to_sequence_length(alt_mask)
-        return sequence_length
+            left_padding_detected = None
+            try:
+                first_mask = K.convert_to_numpy(mask)[:, 0].astype(bool)
+                left_padding_detected = (not np.all(first_mask))
+            except Exception:
+                # If mask cannot be converted here (symbolic), skip strict check
+                left_padding_detected = None
+            if left_padding_detected is True:
+                raise NotImplementedError("Currently, CRF layer does not support left padding")
+        x = inputs
+        if self.proj is not None:
+            x = self.proj(x)
+        potentials = x
+        if self.use_boundary:
+            potentials = self._add_boundary(potentials, mask)
+        lens = self._mask_to_lengths(mask, potentials)
+        decoded, _ = k_crf_decode(potentials, lens, self.trans)
+        return decoded, potentials, lens, self.trans
 
-    def mask_to_sequence_length(self, mask):
-        return tf.reduce_sum(tf.cast(mask, tf.int32), 1)
-
-    @staticmethod
-    def _compute_mask_right_boundary(mask):
-        offset = 1
-        left_shifted_mask = tf.concat([mask[:, offset:], tf.zeros_like(mask[:, :offset])], axis=1)
-        right_boundary = tf.math.greater(tf.cast(mask, tf.int32), tf.cast(left_shifted_mask, tf.int32))
-        return right_boundary
-
-    @staticmethod
-    def _compute_mask_left_boundary(mask):
-        offset = 1
-        right_shifted_mask = tf.concat([tf.zeros_like(mask[:, :offset]), mask[:, :-offset]], axis=1)
-        left_boundary = tf.math.greater(tf.cast(mask, tf.int32), tf.cast(right_shifted_mask, tf.int32))
-        return left_boundary
-
-    def add_boundary_energy(self, potentials, mask, start, end):
-        def expand_scalar_to_3d(x):
-            return tf.reshape(x, (1, 1, -1))
-
-        start = tf.cast(expand_scalar_to_3d(start), potentials.dtype)
-        end = tf.cast(expand_scalar_to_3d(end), potentials.dtype)
+    def _mask_to_lengths(self, mask, potentials):
         if mask is None:
-            potentials = tf.concat([potentials[:, :1, :] + start, potentials[:, 1:, :]], axis=1)
-            potentials = tf.concat([potentials[:, :-1, :], potentials[:, -1:, :] + end], axis=1)
+            B = K.shape(potentials)[0]
+            T = K.shape(potentials)[1]
+            return K.full((B,), T, dtype="int32")
         else:
-            mask = tf.keras.backend.expand_dims(tf.cast(mask, start.dtype), axis=-1)
-            start_mask = tf.cast(self._compute_mask_left_boundary(mask), start.dtype)
-            end_mask = tf.cast(self._compute_mask_right_boundary(mask), end.dtype)
-            potentials = potentials + start_mask * start
-            potentials = potentials + end_mask * end
+            # mask [B, T] -> lengths [B]
+            return K.sum(K.cast(mask, "int32"), axis=1)
+
+    def _add_boundary(self, potentials, mask):
+        # add left at t=0 and right at last valid step
+        B, T, N = K.shape(potentials)[0], K.shape(potentials)[1], K.shape(potentials)[2]
+        start = K.reshape(self.left_boundary, (1, 1, N))
+        end = K.reshape(self.right_boundary, (1, 1, N))
+        # add start to t=0: rebuild by concat
+        first = potentials[:, 0, :] + start[0, 0, :]
+        rest = potentials[:, 1:, :]
+        potentials = K.concatenate([K.expand_dims(first, 1), rest], axis=1)
+        # add end to last time step: rebuild by concat
+        last = potentials[:, -1, :] + end[0, 0, :]
+        mid = potentials[:, :-1, :]
+        potentials = K.concatenate([mid, K.expand_dims(last, 1)], axis=1)
         return potentials
 
-    def get_viterbi_decoding(self, potentials, sequence_length):
-        decode_tags, best_score = kops.crf_decode(potentials, sequence_length, self.chain_kernel)
-        return decode_tags, best_score
-
-    def get_config(self):
-        config = {
-            "units": self.units,
-            "chain_initializer": tf.keras.initializers.serialize(self.chain_initializer),
-            "use_boundary": self.use_boundary,
-            "boundary_initializer": tf.keras.initializers.serialize(self.boundary_initializer),
-            "use_kernel": self.use_kernel,
-        }
-        base_config = super().get_config()
-        return {**base_config, **config}
+    def log_likelihood(self, potentials, tags, lens):
+        return k_crf_ll(potentials, tags, lens, self.trans)
 
     def compute_output_shape(self, input_shape):
-        return input_shape[:2]
+        # input_shape: (batch, time, features)
+        B, T, _ = input_shape
+        return (
+            (B, T),                  # decoded tags
+            (B, T, self.units),      # potentials
+            (B,),                    # lengths
+            (self.units, self.units) # transition matrix
+        )
 
-    def log_likelihood(self, potentials, tags, sequence_length):
-        """
-        Compute per-example log-likelihood using the backend-agnostic core ops.
-        Returns a tensor shaped [batch].
-        """
-        return kops.crf_log_likelihood(potentials, tags, sequence_length, self.chain_kernel)
-
-    def compute_mask(self, input_, mask=None):
-        return mask
-
-    @property
-    def _compute_dtype(self):
-        return tf.int32
-
+    def get_config(self):
+        cfg = {"units": self.units, "use_boundary": self.use_boundary, "use_kernel": self.use_kernel}
+        base = super().get_config()
+        return {**base, **cfg}

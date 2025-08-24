@@ -1,13 +1,11 @@
-# Standalone CRF text ops adapted from TensorFlow Addons
-# Minimal edits for Keras 3 compatibility and local imports
-
+# TensorFlow-specific text ops and decode routines relying on TF ops
 import warnings
 from typing import Optional, Tuple
 
 import numpy as np
 import tensorflow as tf
 
-from .utils.types import TensorLike
+from keras_crf.utils.types import TensorLike
 from .rnn.abstract_rnn_cell import AbstractRNNCell
 from typeguard import typechecked
 

@@ -6,7 +6,7 @@ Features
 - Linear-chain CRF decoding (Viterbi)
 - Log-likelihood and training via gradients
 - Masking support (right-padding)
-- Minimal API surface: `keras_crf.CRF` layer and `keras_crf.text` ops
+- Minimal API surface: `keras_crf.CRF` layer and `keras_crf.crf_ops` ops
 
 Quickstart
 ```python
@@ -49,7 +49,7 @@ Backend independence
   - TensorFlow: pip install .[tf]
   - PyTorch: pip install .[torch]
   - JAX (CPU): pip install .[jax]
-- Legacy TF-only ops remain available under keras_crf.text for compatibility; the CRF layer does not depend on them.
+- TensorFlow-specific ops and layer live in the separate tf_keras_crf package. Install tf-keras-crf and import `tf_keras_crf.text` and `tf_keras_crf.CRF` if you need TF-native behavior.
 
 Installation
 - From PyPI: pip install keras3-crf

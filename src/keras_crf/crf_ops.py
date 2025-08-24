@@ -32,10 +32,10 @@ def crf_sequence_score(potentials, tags, lens, trans):
     # Binary score over transitions
     prev = tags[:, :-1]  # [B, T-1]
     curr = tags[:, 1:]   # [B, T-1]
-    prev_oh = _one_hot(prev, N)  # [B, T-1, N]
-    curr_oh = _one_hot(curr, N)  # [B, T-1, N]
+    prev_oh = K.cast(_one_hot(prev, N), potentials.dtype)  # [B, T-1, N]
+    curr_oh = K.cast(_one_hot(curr, N), potentials.dtype)  # [B, T-1, N]
     # prev @ trans -> [B, T-1, N]
-    trans_applied = K.matmul(prev_oh, trans)  # matmul handles [..., N] x [N, N]
+    trans_applied = K.matmul(prev_oh, K.cast(trans, potentials.dtype))  # matmul handles [..., N] x [N, N]
     step_scores = K.sum(trans_applied * curr_oh, axis=-1)  # [B, T-1]
     lens_minus_one = lens - K.ones_like(lens)
     m2 = _length_mask(K.maximum(lens_minus_one, K.zeros_like(lens)), T - 1)  # [B, T-1]
@@ -49,17 +49,17 @@ def crf_log_norm(potentials, lens, trans):
     lens = K.cast(lens, "int32")
     B, T, N = K.shape(potentials)[0], K.shape(potentials)[1], K.shape(potentials)[2]
     alphas = potentials[:, 0, :]  # [B, N]
-    trans_e = K.expand_dims(trans, 0)  # [1, N, N]
+    trans_e = K.expand_dims(K.cast(trans, potentials.dtype), 0)  # [1, N, N]
     # Iterate time
     t = 1
     while t < T:
         prev = K.expand_dims(alphas, 2)  # [B, N, 1]
         scores = prev + trans_e  # [B, N, N]
-        new_alphas = K.logsumexp(scores, axis=1) + potentials[:, t, :]
+        new_alphas = K.logsumexp(scores, axis=(1,)) + potentials[:, t, :]
         cond = K.expand_dims((t < lens), -1)  # [B, 1]
         alphas = K.where(cond, new_alphas, alphas)
         t = t + 1
-    return K.logsumexp(alphas, axis=-1)  # [B]
+    return K.logsumexp(alphas, axis=(-1,))  # [B]
 
 
 def crf_log_likelihood(potentials, tags, lens, trans):
@@ -72,7 +72,7 @@ def crf_decode(potentials, lens, trans):
     # Viterbi decode with masking, returns (tags [B, T], best_score [B])
     lens = K.cast(lens, "int32")
     B, T, N = K.shape(potentials)[0], K.shape(potentials)[1], K.shape(potentials)[2]
-    trans_e = K.expand_dims(trans, 0)
+    trans_e = K.expand_dims(K.cast(trans, potentials.dtype), 0)
 
     alphas = potentials[:, 0, :]  # [B, N]
     backp_list = [K.zeros((B, N), dtype="int32")]  # placeholder for t=0
@@ -117,3 +117,13 @@ def crf_decode(potentials, lens, trans):
     mask_invalid_i = K.ones_like(mask_valid_i) - mask_valid_i
     tags = tags * mask_valid_i + rep_last * mask_invalid_i
     return tags, best_score
+
+
+def crf_filtered_inputs(potentials, tag_bitmap):
+    # Replace disallowed positions with a very negative number to effectively mask them
+    return K.where(tag_bitmap, potentials, K.full_like(potentials, -1e30))
+
+
+def crf_constrained_decode(potentials, tag_bitmap, lens, trans):
+    filtered = crf_filtered_inputs(potentials, tag_bitmap)
+    return crf_decode(filtered, lens, trans)

@@ -1,15 +1,18 @@
 import numpy as np
-import tensorflow as tf
+import pytest
 import keras
 from keras import ops as K
-import pytest
 
-pytestmark = pytest.mark.tf_only
+from keras_crf.crf_ops import crf_log_likelihood as core_ll, crf_decode as core_decode
+from keras_crf import CRF as KerasCoreCRF
 
-from keras_crf.core_kops import crf_log_likelihood as core_ll, crf_decode as core_decode
-from keras_crf import text as tf_text
-from keras_crf.layers import CRF as TFCRF
-from keras_crf.layers_core import KerasCoreCRF
+# Optional compatibility against TensorFlow implementation if tf_keras_crf is installed
+try:
+    import tf_keras_crf
+    import tensorflow as tf  # only used if tf_keras_crf is present
+    HAS_TF_KERAS_CRF = True
+except Exception:
+    HAS_TF_KERAS_CRF = False
 
 
 def test_ops_compatibility_ll_and_decode():
@@ -20,13 +23,15 @@ def test_ops_compatibility_ll_and_decode():
     lens_np = np.array([4, 3], dtype=np.int32)
     trans_np = rng.normal(size=(N, N)).astype("float32")
 
-    # TF ops path
+    if not HAS_TF_KERAS_CRF:
+        pytest.skip("tf_keras_crf not installed; skipping compatibility comparison")
+    # TF ops path via tf_keras_crf
     potentials_tf = tf.convert_to_tensor(potentials_np)
     tags_tf = tf.convert_to_tensor(tags_np)
     lens_tf = tf.convert_to_tensor(lens_np)
     trans_tf = tf.convert_to_tensor(trans_np)
-    ll_tf, _ = tf_text.crf_log_likelihood(potentials_tf, tags_tf, lens_tf, trans_tf)
-    dec_tf, score_tf = tf_text.crf_decode(potentials_tf, trans_tf, lens_tf)
+    ll_tf, _ = tf_keras_crf.text.crf_log_likelihood(potentials_tf, tags_tf, lens_tf, trans_tf)
+    dec_tf, score_tf = tf_keras_crf.text.crf_decode(potentials_tf, trans_tf, lens_tf)
 
     # Core (Keras Core ops) path
     potentials_k = K.convert_to_tensor(potentials_np)
@@ -54,8 +59,10 @@ def test_layer_compatibility_no_kernel_no_boundary():
     x_np = rng.normal(size=(B, T, N)).astype("float32")
     trans_np = rng.normal(size=(N, N)).astype("float32")
 
+    if not HAS_TF_KERAS_CRF:
+        pytest.skip("tf_keras_crf not installed; skipping compatibility comparison")
     # TF CRF layer
-    tf_layer = TFCRF(units=N, use_kernel=False, use_boundary=False)
+    tf_layer = tf_keras_crf.CRF(units=N, use_kernel=False, use_boundary=False)
     decoded_tf, pot_tf, lens_tf, kernel_tf = tf_layer(x_np)
 
     # Core CRF layer

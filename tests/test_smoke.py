@@ -1,6 +1,7 @@
-# Eager-mode smoke tests for the standalone keras_crf package
+# Backend-agnostic smoke tests for the standalone keras_crf package
 import numpy as np
-import tensorflow as tf
+import keras
+from keras import ops as K
 
 from keras_crf import CRF
 
@@ -19,12 +20,14 @@ def test_smoke_decode_and_loss():
     layer = CRF(units=4)
 
     decoded, potentials, seq_len, kernel = layer(x)
-    assert decoded.shape == (2, 3)
-    assert potentials.shape == (2, 3, 4)
+    assert K.shape(decoded) == (2, 3)
+    assert K.shape(potentials) == (2, 3, 4)
 
     ll = layer.log_likelihood(potentials, y, seq_len)
-    loss = -tf.reduce_mean(ll)
-    assert tf.math.is_finite(loss)
+    loss = -K.mean(ll)
+    # Convert to numpy and check finite
+    loss_np = float(K.convert_to_numpy(loss))
+    assert np.isfinite(loss_np)
 
 
 def test_single_timestep_decode_and_loss():
@@ -51,15 +54,15 @@ def test_single_timestep_decode_and_loss():
 
     # Decode should be simple argmax at t=0 for each batch element
     expected_decoded = np.array([[1], [2]], dtype=np.int32)
-    np.testing.assert_array_equal(decoded.numpy(), expected_decoded)
+    np.testing.assert_array_equal(K.convert_to_numpy(decoded), expected_decoded)
 
     # best_score in single-step path should be max over last dim at t=0
     # Use layer decode path again, best score derived from t=0 unary in single-step
     dec2, _, _, _ = layer(x)
-    best_score = tf.reduce_max(potentials[:, 0, :], axis=-1)
-    np.testing.assert_array_equal(dec2.numpy(), expected_decoded)
+    best_score = K.max(potentials[:, 0, :], axis=-1)
+    np.testing.assert_array_equal(K.convert_to_numpy(dec2), expected_decoded)
     expected_best = np.array([1.0, 0.3], dtype=np.float32)
-    np.testing.assert_allclose(best_score.numpy(), expected_best, rtol=1e-6, atol=1e-6)
+    np.testing.assert_allclose(K.convert_to_numpy(best_score), expected_best, rtol=1e-6, atol=1e-6)
 
     # Log-likelihood equals unary(tag) - logsumexp(unary) for each sample, since transitions unused
     ll = layer.log_likelihood(potentials, y, seq_len)
@@ -71,5 +74,5 @@ def test_single_timestep_decode_and_loss():
     expected_ll = np.array(
         [x[0, 0, 1] - lse(x[0, 0]), x[1, 0, 2] - lse(x[1, 0])], dtype=np.float32
     )
-    np.testing.assert_allclose(ll.numpy(), expected_ll, rtol=1e-6, atol=1e-6)
+    np.testing.assert_allclose(K.convert_to_numpy(ll), expected_ll, rtol=1e-6, atol=1e-6)
 

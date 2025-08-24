@@ -10,7 +10,7 @@ jobs:
   test:
     strategy:
       matrix:
-        backend: [tensorflow, torch, jax]
+        backend: [torch, jax]
         python-version: ["3.10", "3.11", "3.12", "3.13"]
     runs-on: ubuntu-latest
     steps:
@@ -28,9 +28,7 @@ jobs:
       - name: Install package, test deps, and backend
         run: |
           pip install -e .[test]
-          if [ "${{ matrix.backend }}" = "tensorflow" ]; then
-            pip install .[tf]
-          elif [ "${{ matrix.backend }}" = "torch" ]; then
+          if [ "${{ matrix.backend }}" = "torch" ]; then
             pip install .[torch]
           elif [ "${{ matrix.backend }}" = "jax" ]; then
             pip install .[jax]
@@ -40,4 +38,14 @@ jobs:
         env:
           KERAS_BACKEND: ${{ matrix.backend }}
         run: pytest -q tests
+
+      - name: Quickstart smoke (${% raw %}{{ matrix.backend }}{% endraw %})
+        env:
+          KERAS_BACKEND: ${{ matrix.backend }}
+        run: |
+          if [ "${{ matrix.backend }}" = "torch" ]; then
+            python examples/quickstart_torch.py
+          elif [ "${{ matrix.backend }}" = "jax" ]; then
+            python examples/quickstart_jax.py
+          fi
 

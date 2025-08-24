@@ -3,16 +3,16 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "keras3-crf"
-version = "0.1.1"
-description = "Standalone CRF layer and ops for Keras 3"
+name = "tf-keras-crf"
+version = "0.0.1"
+description = "TensorFlow-specific CRF layer and ops for Keras 3 (companion to keras3-crf)"
 readme = "README.md"
 license = {text = "Apache-2.0"}
 requires-python = ">=3.9"
 authors = [
   { name = "Keras3-CRF Maintainers" }
 ]
-keywords = ["keras", "tensorflow", "crf", "structured", "sequence", "viterbi"]
+keywords = ["keras", "tensorflow", "crf", "sequence", "viterbi"]
 classifiers = [
   "Programming Language :: Python",
   "Programming Language :: Python :: 3",
@@ -25,36 +25,20 @@ classifiers = [
   "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 dependencies = [
-  "numpy>=1.20",
+  "tensorflow>=2.15",
   "keras>=3.0.0",
   "typeguard>=2.7,<5",
 ]
 
-[project.optional-dependencies]
-# Testing and linting dependencies (not required at runtime)
-test = [
-  "pytest>=8.0.0",
-]
-# Optional backend dependencies
-tf = [
-  "tensorflow>=2.15",
-]
-torch = [
-  "torch>=2.2",
-]
-jax = [
-  "jax[cpu]>=0.4.28",
-]
-
 [project.urls]
-Homepage = "https://github.com/homfunc/keras-crf"
-Repository = "https://github.com/homfunc/keras-crf.git"
-Issues = "https://github.com/homfunc/keras-crf/issues"
+Homepage = "https://github.com/homfunc/tf-keras-crf"
+Repository = "https://github.com/homfunc/tf-keras-crf.git"
+Issues = "https://github.com/homfunc/tf-keras-crf/issues"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
 
 [tool.setuptools.packages.find]
 where = ["src"]
-include = ["keras_crf"]
+include = ["tf_keras_crf"]
 

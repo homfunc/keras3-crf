@@ -1,4 +1,6 @@
-# Keras-CRF minimal package init
+# Backend-agnostic default API
 from .layers import CRF
-from . import text
+from . import crf_ops as ops
+
+__all__ = ["CRF", "ops"]
 

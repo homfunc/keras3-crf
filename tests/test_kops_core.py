@@ -1,7 +1,7 @@
 import numpy as np
 import keras
 from keras import ops as K
-from keras_crf.core_kops import crf_log_likelihood, crf_decode
+from keras_crf.crf_ops import crf_log_likelihood, crf_decode
 
 
 def test_kops_log_likelihood_small():

@@ -7,7 +7,7 @@ on:
     branches: [ main ]
 
 jobs:
-  test:
+  core-tests:
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -17,9 +17,36 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-      - name: Install dependencies
+      - name: Install dependencies (core)
         run: |
           python -m pip install --upgrade pip
-          pip install -e .[test,tf]
-      - name: Run tests
+          pip install -e .[test]
+      - name: Run tests (core)
         run: pytest -q tests
+
+  tf-compat:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: [ '3.11' ]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install keras-crf (editable)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .[test]
+      - name: Install TensorFlow and tf_keras_crf
+        run: |
+          pip install tensorflow
+          pip install -e tf_keras_crf
+      - name: Run tests with TensorFlow available (compat tests auto-engage)
+        env:
+          KERAS_BACKEND: tensorflow
+        run: pytest -q tests
+      - name: Quickstart smoke (tf)
+        env:
+          KERAS_BACKEND: tensorflow
+        run: python examples/quickstart_tf.py

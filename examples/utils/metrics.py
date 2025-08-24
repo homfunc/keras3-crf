@@ -1,8 +1,9 @@
-import tensorflow as tf
+import keras
+from keras import ops as K
 
 
-class MaskedTokenAccuracy(tf.keras.metrics.Metric):
-    """Computes token-level accuracy with an optional mask.
+class MaskedTokenAccuracy(keras.metrics.Metric):
+    """Backend-agnostic token accuracy with optional mask using Keras Core.
 
     update_state(y_true, y_pred, sample_weight=None)
     - y_true: int tensor [batch, time]
@@ -16,23 +17,25 @@ class MaskedTokenAccuracy(tf.keras.metrics.Metric):
         self.total = self.add_weight(name="total", initializer="zeros")
 
     def update_state(self, y_true, y_pred, sample_weight=None):
-        y_true = tf.cast(y_true, tf.int32)
-        y_pred = tf.cast(y_pred, tf.int32)
-        equal = tf.cast(tf.equal(y_true, y_pred), tf.float32)
+        y_true = K.cast(y_true, "int32")
+        y_pred = K.cast(y_pred, "int32")
+        equal = K.cast(K.equal(y_true, y_pred), "float32")
         if sample_weight is not None:
-            sw = tf.cast(sample_weight, tf.float32)
-            # Broadcast if needed
+            sw = K.cast(sample_weight, "float32")
             equal = equal * sw
-            total = tf.reduce_sum(sw)
+            total = K.sum(sw)
         else:
-            total = tf.cast(tf.size(equal), tf.float32)
-        correct = tf.reduce_sum(equal)
-        self.correct.assign_add(correct)
-        self.total.assign_add(total)
+            total = K.cast(K.size(equal), "float32")
+        correct = K.sum(equal)
+        # assign_add with backend scalars to support JAX and Torch tracing
+        self.correct.assign_add(K.cast(correct, "float32"))
+        self.total.assign_add(K.cast(total, "float32"))
 
     def result(self):
-        return tf.math.divide_no_nan(self.correct, self.total)
+        # safe divide
+        denom = self.total
+        return self.correct / (denom + K.cast(1e-8, self.correct.dtype))
 
     def reset_states(self):
-        self.correct.assign(0.0)
-        self.total.assign(0.0)
+        self.correct.assign(K.zeros_like(self.correct))
+        self.total.assign(K.zeros_like(self.total))

@@ -1,11 +1,6 @@
-# Graph-mode tests for keras_crf (tf.function / non-eager)
-import numpy as np
-import tensorflow as tf
+# This test is TF graph-mode specific and belongs in tf_keras_crf.
 import pytest
-
-pytestmark = pytest.mark.tf_only
-
-from keras_crf import CRF, text as kcrf
+pytest.skip("TF graph-mode tests moved to tf_keras_crf; skipping in backend-agnostic package", allow_module_level=True)
 
 
 def get_basic_data():

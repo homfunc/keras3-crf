@@ -1,4 +1,4 @@
-# Minimal AbstractRNNCell compatible with Keras 3
+# Minimal AbstractRNNCell compatible with Keras 3 (TensorFlow-only)
 import tensorflow as tf
 
 

@@ -1,5 +1,6 @@
 import numpy as np
-import tensorflow as tf
+import keras
+from keras import ops as K
 from typing import List, Optional, Tuple, Set
 
 
@@ -75,7 +76,7 @@ def _extract_entities(tags: List[str], scheme: str = "BIO") -> Set[Tuple[int, in
     return spans
 
 
-class EntityF1(tf.keras.metrics.Metric):
+class EntityF1(keras.metrics.Metric):
     """Entity-level F1 for BIO/BILOU schemes.
 
     Provide `id2tag` mapping (list of strings) and scheme in {BIO, BILOU}.
@@ -115,31 +116,32 @@ class EntityF1(tf.keras.metrics.Metric):
         return np.array([tp, fp, fn], dtype=np.float32)
 
     def update_state(self, y_true, y_pred, sample_weight=None):
-        y_true = tf.cast(y_true, tf.int32)
-        y_pred = tf.cast(y_pred, tf.int32)
+        # Convert to numpy for robust backend-agnostic counting
+        yt = K.convert_to_numpy(y_true)
+        yp = K.convert_to_numpy(y_pred)
         if sample_weight is not None:
-            mask = tf.cast(sample_weight, tf.int32)
+            m = K.convert_to_numpy(sample_weight)
         else:
-            # all valid
-            mask = tf.ones_like(y_true, dtype=tf.int32)
-        counts = tf.numpy_function(lambda yt, yp, m: self._batch_counts_numpy(yt, yp, m),
-                                   [y_true, y_pred, mask], Tout=tf.float32)
+            m = np.ones_like(yt, dtype=np.int32)
+        counts = self._batch_counts_numpy(yt.astype(np.int32), yp.astype(np.int32), m.astype(np.int32))
         # counts shape [3]
-        self.tp.assign_add(counts[0])
-        self.fp.assign_add(counts[1])
-        self.fn.assign_add(counts[2])
+        self.tp.assign_add(float(counts[0]))
+        self.fp.assign_add(float(counts[1]))
+        self.fn.assign_add(float(counts[2]))
 
     def precision_value(self):
-        return tf.math.divide_no_nan(self.tp, self.tp + self.fp)
+        denom = self.tp + self.fp
+        return (self.tp / (denom + 1e-8))
 
     def recall_value(self):
-        return tf.math.divide_no_nan(self.tp, self.tp + self.fn)
+        denom = self.tp + self.fn
+        return (self.tp / (denom + 1e-8))
 
     def result(self):
         precision = self.precision_value()
         recall = self.recall_value()
-        f1 = tf.math.divide_no_nan(2 * precision * recall, precision + recall)
-        return f1
+        denom = (precision + recall)
+        return (2.0 * precision * recall) / (denom + 1e-8)
 
     def reset_states(self):
         self.tp.assign(0.0)
