@@ -27,13 +27,18 @@ classifiers = [
 dependencies = [
   "numpy>=1.20",
   "keras>=3.0.0",
-  "typeguard>=2.7,<5",
 ]
 
 [project.optional-dependencies]
-# Testing and linting dependencies (not required at runtime)
+# Testing dependencies (not required at runtime)
 test = [
   "pytest>=8.0.0",
+]
+# Development tools (superset of test tools)
+dev = [
+  "pytest>=8.0.0",
+  "nox>=2024.4.15",
+  "typeguard>=2.7,<5",
 ]
 # Optional backend dependencies
 tensorflow = [
