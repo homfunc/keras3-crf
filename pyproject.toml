@@ -36,14 +36,14 @@ test = [
   "pytest>=8.0.0",
 ]
 # Optional backend dependencies
-tf = [
+tensorflow = [
   "tensorflow>=2.15",
 ]
 torch = [
   "torch>=2.2",
 ]
 jax = [
-  "jax[cpu]>=0.4.28",
+  "jax>=0.4.28",
 ]
 
 [project.urls]
