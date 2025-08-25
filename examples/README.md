@@ -29,6 +29,10 @@ Quickstarts
 - Torch: python examples/quickstart_torch.py
 - JAX (CPU): python examples/quickstart_jax.py
 
+Alternative data loaders
+- PyTorch DataLoader: python examples/data_pytorch_dataloader.py
+- Grain (if installed): python examples/data_grain.py
+
 Notes
 - All training loops and metrics use Keras Core universal ops; no tf.data or TF-only APIs are required.
 - Masking uses 0 as PAD in token IDs; metrics accept sample_weight masks produced from tokens != 0.

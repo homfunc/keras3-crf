@@ -2,6 +2,8 @@ import pytest
 # Backend-agnostic metric; no TF import required
 import numpy as np
 import sys, os
+import keras
+from keras import ops as K
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from examples.utils.ner_metrics import _extract_entities, EntityF1
 
@@ -36,6 +38,6 @@ def test_entity_f1_counts():
     mask = np.ones_like(y_true, dtype=np.int32)
     m = EntityF1(id2tag, scheme="BIO")
     m.update_state(y_true, y_pred, sample_weight=mask)
-    f1 = float(m.result().numpy())
+    f1 = float(K.convert_to_numpy(m.result()))
     # tp=2 (PER,LOC in first), fn=1 (second LOC), fp=0 -> P=2/2, R=2/3, F1=2*1*(2/3)/(1+2/3)=0.8
     assert abs(f1 - 0.8) < 1e-6

@@ -51,6 +51,24 @@ Backend independence
   - JAX (CPU): pip install .[jax]
 - TensorFlow-specific ops and layer live in the separate tf_keras_crf package. Install tf-keras-crf and import `tf_keras_crf.text` and `tf_keras_crf.CRF` if you need TF-native behavior.
 
+Automatic backend selection (optional)
+You can auto-select the Keras backend based on what’s installed (priority: jax > tensorflow > torch) by creating a sitecustomize.py file on your PYTHONPATH (Python will import it automatically on startup). For example, place this file into your virtualenv’s site-packages or your project root and ensure it’s on sys.path:
+
+```
+# sitecustomize.py
+import os, importlib.util
+
+if "KERAS_BACKEND" not in os.environ:
+    for mod in ("jax", "tensorflow", "torch"):
+        if importlib.util.find_spec(mod) is not None:
+            os.environ["KERAS_BACKEND"] = {"jax": "jax", "tensorflow": "tensorflow", "torch": "torch"}[mod]
+            break
+```
+
+Notes:
+- This runs before any user code and before `import keras`, so the backend is set in time.
+- If KERAS_BACKEND is already set in the environment, this script will not override it.
+
 Installation
 - Python >= 3.10 supported.
 - From PyPI: pip install keras3-crf
