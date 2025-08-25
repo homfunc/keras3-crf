@@ -32,6 +32,8 @@ jobs:
             pip install .[torch]
           elif [ "${{ matrix.backend }}" = "jax" ]; then
             pip install .[jax]
+          elif [ "${{ matrix.backend }}" = "tensorflow" ]; then
+            pip install .[tensorflow]
           fi
 
       - name: Run tests
@@ -47,5 +49,7 @@ jobs:
             python examples/quickstart_torch.py
           elif [ "${{ matrix.backend }}" = "jax" ]; then
             python examples/quickstart_jax.py
+          elif [ "${{ matrix.backend }}" = "tensorflow" ]; then
+            python examples/quickstart_tensorflow.py
           fi
 
