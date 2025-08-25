@@ -39,15 +39,36 @@ def main():
             B = pot_shape[0]
             return (B,)
 
-    nll = CRF_NLL()([potentials, labels, lens, trans])
+    nll = CRF_NLL(name="nll_out")([potentials, labels, lens, trans])
 
-    model = keras.Model(inputs={"tokens": tokens, "labels": labels}, outputs=nll)
+    decoded_named = keras.layers.Lambda(lambda z: z, name="decoded_output")(decoded)
+    nll_named = keras.layers.Lambda(lambda z: z, name="crf_log_likelihood_output")(nll)
 
-    def identity_loss(y_true, y_pred):
-        return K.mean(y_pred)
+    model = keras.Model(
+        inputs={"tokens": tokens, "labels": labels},
+        outputs={"decoded_output": decoded_named, "crf_log_likelihood_output": nll_named},
+    )
 
-    model.compile(optimizer=keras.optimizers.Adam(1e-3), loss=identity_loss)
-    model.fit({"tokens": X, "labels": Y}, np.zeros((B,), dtype=np.float32), epochs=1, batch_size=B, verbose=2)
+    def zero_loss(y_true, y_pred):
+        return K.mean(K.zeros_like(y_pred[..., :1]))
+
+    model.compile(
+        optimizer=keras.optimizers.Adam(1e-3),
+        loss={"decoded_output": zero_loss, "crf_log_likelihood_output": lambda y_true, y_pred: K.mean(y_pred)},
+        metrics={"decoded_output": []},
+    )
+
+    y_dummy = np.zeros((B,), dtype=np.float32)
+    sw_dummy = np.ones((B,), dtype=np.float32)
+
+    model.fit(
+        {"tokens": X, "labels": Y},
+        {"decoded_output": Y, "crf_log_likelihood_output": y_dummy},
+        epochs=1,
+        batch_size=B,
+        sample_weight={"decoded_output": np.ones_like(Y, dtype=np.float32), "crf_log_likelihood_output": sw_dummy},
+        verbose=2,
+    )
 
     print("Done (tf).")
 

@@ -43,31 +43,40 @@ def main():
             B = pot_shape[0]
             return (B,)
 
-    nll_out = CRF_NLL(name="nll_out")([potentials, labels, lens, trans])
+    nll = CRF_NLL(name="nll_out")([potentials, labels, lens, trans])
 
-    # Loss-only training graph (robust across backends)
-    model_loss = keras.Model(inputs={"tokens": tokens, "labels": labels}, outputs=nll_out)
+    # Named outputs to match compile dict keys
+    decoded_named = keras.layers.Lambda(lambda z: z, name="decoded_output")(decoded)
+    nll_named = keras.layers.Lambda(lambda z: z, name="crf_log_likelihood_output")(nll)
 
-    def identity_loss(y_true, y_pred):
-        return K.mean(y_pred)
+    model = keras.Model(
+        inputs={"tokens": tokens, "labels": labels},
+        outputs={"decoded_output": decoded_named, "crf_log_likelihood_output": nll_named},
+    )
 
-    model_loss.compile(optimizer=keras.optimizers.Adam(1e-3), loss=identity_loss, run_eagerly=True)
+    def zero_loss(y_true, y_pred):
+        return K.mean(K.zeros_like(y_pred[..., :1]))
 
-    # One short epoch optimizing CRF NLL
-    _ = model_loss.fit(
+    model.compile(
+        optimizer=keras.optimizers.Adam(1e-3),
+        loss={"decoded_output": zero_loss, "crf_log_likelihood_output": lambda y_true, y_pred: K.mean(y_pred)},
+        metrics={"decoded_output": [MaskedTokenAccuracy()]},
+        run_eagerly=True,
+    )
+
+    y_dummy = np.zeros((B,), dtype=np.float32)
+    sw_dummy = np.ones((B,), dtype=np.float32)
+
+    model.fit(
         {"tokens": X, "labels": Y},
-        np.zeros((B,), dtype=np.float32),
-        sample_weight=np.ones((B,), dtype=np.float32),
+        {"decoded_output": Y, "crf_log_likelihood_output": y_dummy},
         epochs=1,
-        batch_size=B,
+        batch_size=16,
+        sample_weight={"decoded_output": mask, "crf_log_likelihood_output": sw_dummy},
         verbose=2,
     )
 
-    # Separate inference model for decoded tags (for reporting only)
-    model_pred = keras.Model(tokens, decoded)
-    preds = model_pred.predict(X, batch_size=B, verbose=0)
-    acc = (preds[mask.astype(bool)] == Y[mask.astype(bool)]).mean()
-    print(f"Done (torch). Masked token accuracy (reported post-train): {acc:.4f}")
+    print("Done (torch).")
 
 
 if __name__ == "__main__":
