@@ -75,7 +75,7 @@ Backend independence
 - Select backend by setting KERAS_BACKEND environment variable before import:
   - bash example: export KERAS_BACKEND=tensorflow (or torch, or jax)
 - Install optional backend packages as needed:
-  - TensorFlow: pip install .[tf]
+  - TensorFlow: pip install .[tensorflow]
   - PyTorch: pip install .[torch]
   - JAX (CPU): pip install .[jax]
 - TensorFlow-specific ops and layer live in the separate tf_keras_crf package. Install tf-keras-crf and import `tf_keras_crf.text` and `tf_keras_crf.CRF` if you need TF-native behavior.
@@ -99,7 +99,7 @@ Notes:
 - If KERAS_BACKEND is already set in the environment, this script will not override it.
 
 Installation
-- Python >= 3.10 supported.
+- Python >= 3.9 supported.
 - From PyPI: pip install keras3-crf
 - From source (editable): pip install -e .
 
@@ -107,6 +107,14 @@ Testing
 ```bash
 pytest -q tests
 ```
+
+Development and testing with nox
+- Install dev tools (includes nox):
+  - pip install -e .[dev]
+- Run tests across a backend with nox (auto-installs that backend extra in a session venv):
+  - nox -s tests -- backend=jax   # or tensorflow | torch
+- Run example quickstarts via nox:
+  - nox -s quickstarts -- backend=jax
 
 Backend snippets
 - See `examples/torch_jax_snippet.md` for a minimal Torch/JAX example using the CRF layer with Keras 3 universal ops.

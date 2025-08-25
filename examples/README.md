@@ -3,12 +3,15 @@
 These examples run with any Keras 3 backend: TensorFlow, PyTorch, or JAX.
 
 Setup
-- Install the package from the repo root:
-  - pip install -e .
-- Install one backend of your choice:
+- Install the package from the repo root (dev tools include nox):
+  - pip install -e .[dev]
+- Install one backend of your choice (if running examples directly):
   - TensorFlow: pip install tensorflow
   - PyTorch: pip install torch
   - JAX (CPU): pip install "jax[cpu]"
+- Or use nox to handle backend extras in an isolated session:
+  - nox -s tests -- backend=tensorflow  # runs tests with TF
+  - nox -s quickstarts -- backend=torch # runs the Torch quickstart
 - Select the backend before importing Keras:
   - export KERAS_BACKEND=tensorflow   # or torch, or jax
 

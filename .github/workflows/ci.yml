@@ -25,31 +25,17 @@ jobs:
       - name: Upgrade pip
         run: python -m pip install -U pip
 
-      - name: Install package, test deps, and backend
+      - name: Install dev tools
         run: |
-          pip install -e .[test]
-          if [ "${{ matrix.backend }}" = "torch" ]; then
-            pip install .[torch]
-          elif [ "${{ matrix.backend }}" = "jax" ]; then
-            pip install .[jax]
-          elif [ "${{ matrix.backend }}" = "tensorflow" ]; then
-            pip install .[tensorflow]
-          fi
+          pip install -e .[dev]
 
-      - name: Run tests
+      - name: Run tests via nox
         env:
           KERAS_BACKEND: ${{ matrix.backend }}
-        run: pytest -q tests
+        run: nox -s tests -- backend=${{ matrix.backend }}
 
-      - name: Quickstart smoke (${% raw %}{{ matrix.backend }}{% endraw %})
+      - name: Quickstart smoke via nox (${{ matrix.backend }})
         env:
           KERAS_BACKEND: ${{ matrix.backend }}
-        run: |
-          if [ "${{ matrix.backend }}" = "torch" ]; then
-            python examples/quickstart_torch.py
-          elif [ "${{ matrix.backend }}" = "jax" ]; then
-            python examples/quickstart_jax.py
-          elif [ "${{ matrix.backend }}" = "tensorflow" ]; then
-            python examples/quickstart_tf.py
-          fi
+        run: nox -s quickstarts -- backend=${{ matrix.backend }}
 
