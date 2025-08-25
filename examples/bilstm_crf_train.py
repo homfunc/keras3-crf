@@ -11,7 +11,7 @@ import keras
 from keras import layers, ops as K
 
 from keras_crf import CRF
-from keras_crf.crf_ops import crf_log_likelihood
+from keras_crf.train_utils import make_crf_tagger, prepare_crf_targets
 from examples.utils.data import make_varlen_dataset, read_conll, build_maps, encode_and_pad
 from examples.utils.metrics import MaskedTokenAccuracy
 from examples.utils.ner_metrics import EntityF1
@@ -20,34 +20,16 @@ from examples.utils.ner_metrics import EntityF1
 def build_models(vocab_size, num_tags, embedding_dim=64, lstm_units=64):
     # Variable-length sequences; rely on compute_output_shape in CRF
     tokens_in = keras.Input(shape=(None,), dtype="int32", name="tokens")
-    labels_in = keras.Input(shape=(None,), dtype="int32", name="labels")
 
     x = layers.Embedding(input_dim=vocab_size + 1, output_dim=embedding_dim, mask_zero=True)(tokens_in)
     x = layers.Bidirectional(layers.LSTM(lstm_units, return_sequences=True))(x)
 
-    crf_layer = CRF(units=num_tags)
-    decoded, potentials, lens, trans = crf_layer(x)
+    model = make_crf_tagger(tokens_in, x, num_tags)
 
-    class CRF_NLL(keras.layers.Layer):
-        def call(self, inputs):
-            pot, y_true, ln, tr = inputs
-            ll = crf_log_likelihood(pot, y_true, ln, tr)
-            return -ll
+    # Inference model: decoded tags
+    decoded_model = keras.Model(tokens_in, model.get_layer('decoded_output').output)
 
-        def compute_output_shape(self, input_shapes):
-            pot_shape = input_shapes[0]
-            B = pot_shape[0]
-            return (B,)
-
-    nll_out = CRF_NLL(name="nll_out")([potentials, labels_in, lens, trans])
-
-    # Model for training the CRF NLL (loss-only)
-    model_loss = keras.Model(inputs={"tokens": tokens_in, "labels": labels_in}, outputs=nll_out)
-
-    # Model for inference (decoded paths only)
-    model_pred = keras.Model(inputs=tokens_in, outputs=decoded)
-
-    return model_loss, model_pred
+    return model, decoded_model
 
 
 def parse_args():
@@ -102,21 +84,18 @@ def main():
         for t, i in tag2id.items():
             id2tag[i] = t
 
-    model_loss, model_pred = build_models(vocab_size=vocab_size, num_tags=num_tags,
+    model, model_pred = build_models(vocab_size=vocab_size, num_tags=num_tags,
                                    embedding_dim=args.embedding_dim, lstm_units=args.lstm_units)
 
-    # Compile the loss-only training model
-    def identity_loss(y_true, y_pred):
-        return K.mean(y_pred)
+    # Train using helper targets
+    y_train_dict, sw_train_dict = prepare_crf_targets(Y_train, mask=(X_train != 0).astype(np.float32))
+    y_val_dict, sw_val_dict = prepare_crf_targets(Y_val, mask=(X_val != 0).astype(np.float32))
 
-    model_loss.compile(optimizer=keras.optimizers.Adam(args.lr), loss=identity_loss)
-
-    # Train
-    _ = model_loss.fit({"tokens": X_train, "labels": Y_train},
-                       np.zeros((X_train.shape[0],), dtype=np.float32),
-                       sample_weight=np.ones((X_train.shape[0],), dtype=np.float32),
-                       validation_data=({"tokens": X_val, "labels": Y_val}, np.zeros((X_val.shape[0],), dtype=np.float32)),
-                       epochs=args.epochs, batch_size=args.batch_size, verbose=2)
+    _ = model.fit({"tokens": X_train, "labels": Y_train},
+                  y_train_dict,
+                  sample_weight=sw_train_dict,
+                  validation_data=({"tokens": X_val, "labels": Y_val}, y_val_dict, sw_val_dict),
+                  epochs=args.epochs, batch_size=args.batch_size, verbose=2)
 
     # Evaluate masked token accuracy and per-entity metrics using inference model
     decoded = model_pred.predict(X_test, batch_size=args.batch_size, verbose=0)

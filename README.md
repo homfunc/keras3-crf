@@ -8,7 +8,7 @@ Features
 - Masking support (right-padding)
 - Minimal API surface: `keras_crf.CRF` layer and `keras_crf.crf_ops` ops
 
-Quickstart
+Quickstart (simple TF loop)
 ```python
 import numpy as np
 import tensorflow as tf
@@ -32,6 +32,35 @@ with tf.GradientTape() as tape:
     ll = crf.log_likelihood(potentials, tags, seq_len)
     loss = -tf.reduce_mean(ll)
 opt.apply_gradients(zip(tape.gradient(loss, crf.trainable_variables), crf.trainable_variables))
+```
+
+High-level training helper (backend-agnostic)
+Use make_crf_tagger to attach a CRF head that’s ready to train with Model.fit while keeping decoded output separate from the NLL loss head.
+
+```python
+import numpy as np
+import keras
+from keras import layers
+from keras_crf.train_utils import make_crf_tagger, prepare_crf_targets
+
+# Build encoder
+vocab_size, num_tags = 1000, 5
+tokens = keras.Input(shape=(None,), dtype='int32', name='tokens')
+x = layers.Embedding(vocab_size + 1, 64, mask_zero=True)(tokens)
+x = layers.Bidirectional(layers.LSTM(64, return_sequences=True))(x)
+
+# Build CRF tagger model
+model = make_crf_tagger(tokens, x, num_tags)
+
+# Fit
+X = np.random.randint(1, vocab_size+1, size=(64, 20), dtype=np.int32)
+Y = np.random.randint(0, num_tags, size=(64, 20), dtype=np.int32)
+mask = (X != 0).astype('float32')
+y_dict, sw_dict = prepare_crf_targets(Y, mask)
+model.fit({'tokens': X, 'labels': Y}, y_dict, sample_weight=sw_dict, epochs=1)
+
+# Predict decoded tags
+decoded = model.get_layer('decoded_output').output  # or use a separate inference Model
 ```
 
 Notes

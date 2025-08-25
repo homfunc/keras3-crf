@@ -28,6 +28,13 @@ CoNLL dataset
 Quickstarts
 - Torch: python examples/quickstart_torch.py
 - JAX (CPU): python examples/quickstart_jax.py
+- TensorFlow: python examples/quickstart_tf.py
+
+Helper API
+- The quickstarts and trainer use keras_crf.train_utils.make_crf_tagger to attach a CRF training head with two outputs:
+  - decoded_output: per-token predictions used for metrics
+  - crf_log_likelihood_output: per-sample negative log-likelihood used for training loss
+- Use keras_crf.train_utils.prepare_crf_targets(y_true, mask) to build the y and sample_weight dicts for Model.fit.
 
 Alternative data loaders
 - PyTorch DataLoader: python examples/data_pytorch_dataloader.py

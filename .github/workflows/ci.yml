@@ -1,4 +1,4 @@
-name: CI (Backends)
+name: CI
 
 on:
   push:
@@ -50,6 +50,6 @@ jobs:
           elif [ "${{ matrix.backend }}" = "jax" ]; then
             python examples/quickstart_jax.py
           elif [ "${{ matrix.backend }}" = "tensorflow" ]; then
-            python examples/quickstart_tensorflow.py
+            python examples/quickstart_tf.py
           fi
 
