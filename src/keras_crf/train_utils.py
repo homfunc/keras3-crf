@@ -33,9 +33,15 @@ def make_crf_tagger(tokens_input,
         crf_log_likelihood_output: per-sample loss [B] (drives training; name kept for backward compatibility)
       The model expects inputs {'tokens': tokens, 'labels': labels} and outputs as above.
     """
-    # Ensure named 'tokens' output for inputs dict convenience
+    # Ensure named 'tokens' output for inputs dict convenience (mask-preserving)
+    class _Identity(keras.layers.Layer):
+        def __init__(self, **kw):
+            super().__init__(**kw)
+            self.supports_masking = True
+        def call(self, x):
+            return x
     if tokens_input.name.split(':')[0] != 'tokens':
-        tokens_named = keras.layers.Lambda(lambda z: z, name='tokens')(tokens_input)
+        tokens_named = _Identity(name='tokens')(tokens_input)
     else:
         tokens_named = tokens_input
 
@@ -107,7 +113,7 @@ def make_crf_tagger(tokens_input,
         raise ValueError(f"Unsupported loss option: {loss}")
 
     # Name outputs to align with compile/loss/metrics dict keys
-    decoded_named = keras.layers.Lambda(lambda z: z, name="decoded_output")(decoded)
+    decoded_named = _Identity(name="decoded_output")(decoded)
     # For backward compatibility, keep the output name 'crf_log_likelihood_output'
     loss_named = keras.layers.Lambda(lambda z: z, name="crf_log_likelihood_output")(loss_head)
 

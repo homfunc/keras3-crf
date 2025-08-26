@@ -58,4 +58,4 @@ Notes
 - All training loops and metrics use Keras Core universal ops; no tf.data or TF-only APIs are required.
 - Masking uses 0 as PAD in token IDs; metrics accept sample_weight masks produced from tokens != 0.
 - For GPU support, follow official backend installation docs to choose the correct wheels.
-- Existing notebooks are kept for reference; the scripts above represent the up-to-date paths.
+- Existing notebooks (BiLSTM_CRF*.ipynb, Torch_JAX_KerasCore_CRF.ipynb) are legacy and may contain older APIs. Prefer the Python scripts here (bilstm_crf_train.py, bilstm_crf_manual.py) for current usage.

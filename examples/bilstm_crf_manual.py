@@ -82,7 +82,13 @@ def build_bilstm_crf_manual(num_tags: int,
     else:
         raise ValueError(f"Unsupported loss: {loss}")
 
-    decoded_out = keras.layers.Lambda(lambda z: z, name="decoded_output")(decoded)
+    class _Identity(keras.layers.Layer):
+        def __init__(self, **kw):
+            super().__init__(**kw)
+            self.supports_masking = True
+        def call(self, x):
+            return x
+    decoded_out = _Identity(name="decoded_output")(decoded)
     loss_out = keras.layers.Lambda(lambda z: z, name="crf_log_likelihood_output")(loss_vec)
 
     model = keras.Model(inputs={"tokens": tokens_in, "labels": labels}, outputs={"decoded_output": decoded_out, "crf_log_likelihood_output": loss_out})
