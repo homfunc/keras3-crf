@@ -17,14 +17,14 @@ from examples.utils.metrics import MaskedTokenAccuracy
 from examples.utils.ner_metrics import EntityF1
 
 
-def build_models(vocab_size, num_tags, embedding_dim=64, lstm_units=64):
+def build_models(vocab_size, num_tags, embedding_dim=64, lstm_units=64, loss="nll", dice_smooth=1.0, joint_nll_weight=None):
     # Variable-length sequences; rely on compute_output_shape in CRF
     tokens_in = keras.Input(shape=(None,), dtype="int32", name="tokens")
 
     x = layers.Embedding(input_dim=vocab_size + 1, output_dim=embedding_dim, mask_zero=True)(tokens_in)
     x = layers.Bidirectional(layers.LSTM(lstm_units, return_sequences=True))(x)
 
-    model = make_crf_tagger(tokens_in, x, num_tags)
+    model = make_crf_tagger(tokens_in, x, num_tags, metrics=[MaskedTokenAccuracy()], loss=loss, dice_smooth=dice_smooth, joint_nll_weight=joint_nll_weight)
 
     # Inference model: decoded tags
     decoded_model = keras.Model(tokens_in, model.get_layer('decoded_output').output)
@@ -51,6 +51,9 @@ def parse_args():
     p.add_argument("--scheme", choices=["BIO","BILOU"], default="BIO")
     p.add_argument("--batch-size", type=int, default=64)
     p.add_argument("--lr", type=float, default=1e-3)
+    p.add_argument("--loss", choices=["nll", "dice", "dice+nll"], default="nll", help="Training loss: NLL, Dice, or joint Dice+NLL")
+    p.add_argument("--dice-smooth", type=float, default=1.0, help="Smoothing constant for Dice loss")
+    p.add_argument("--joint-nll-weight", type=float, default=None, help="If using dice+nll, weight for NLL term (default 0.2)")
     # Note: run_eagerly is backend-dependent; safe default False
     return p.parse_args()
 
@@ -85,7 +88,8 @@ def main():
             id2tag[i] = t
 
     model, model_pred = build_models(vocab_size=vocab_size, num_tags=num_tags,
-                                   embedding_dim=args.embedding_dim, lstm_units=args.lstm_units)
+                                   embedding_dim=args.embedding_dim, lstm_units=args.lstm_units,
+                                   loss=args.loss, dice_smooth=args.dice_smooth, joint_nll_weight=args.joint_nll_weight)
 
     # Train using helper targets
     y_train_dict, sw_train_dict = prepare_crf_targets(Y_train, mask=(X_train != 0).astype(np.float32))

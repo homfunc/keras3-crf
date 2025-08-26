@@ -2,11 +2,18 @@ import numpy as np
 import keras
 from keras import ops as K
 
-from .crf_ops import crf_log_likelihood
+from .crf_ops import crf_log_likelihood, crf_marginals
 from . import CRF
 
 
-def make_crf_tagger(tokens_input, features, num_tags, optimizer=None, metrics=None):
+def make_crf_tagger(tokens_input,
+                    features,
+                    num_tags,
+                    optimizer=None,
+                    metrics=None,
+                    loss: str = "nll",
+                    dice_smooth: float = 1.0,
+                    joint_nll_weight: float = None):
     """
     Build a training-ready Keras Model for sequence tagging with a CRF head.
 
@@ -16,11 +23,14 @@ def make_crf_tagger(tokens_input, features, num_tags, optimizer=None, metrics=No
     - num_tags: number of tag classes.
     - optimizer: optional optimizer (default Adam(1e-3))
     - metrics: list of metrics to apply to the decoded_output head (optional)
+    - loss: one of {"nll", "dice", "dice+nll"}. Default "nll".
+    - dice_smooth: smoothing constant for dice.
+    - joint_nll_weight: if loss == "dice+nll", weight for the NLL term (0..1). Default 0.2.
 
     Returns
     - model: a compiled Model with two outputs:
         decoded_output: int tags [B, T] (metrics only)
-        crf_log_likelihood_output: per-sample NLL [B] (drives training)
+        crf_log_likelihood_output: per-sample loss [B] (drives training; name kept for backward compatibility)
       The model expects inputs {'tokens': tokens, 'labels': labels} and outputs as above.
     """
     # Ensure named 'tokens' output for inputs dict convenience
@@ -35,27 +45,75 @@ def make_crf_tagger(tokens_input, features, num_tags, optimizer=None, metrics=No
     # Labels input
     labels = keras.Input(shape=(None,), dtype="int32", name="labels")
 
-    # NLL head
     class CRF_NLL(keras.layers.Layer):
         def call(self, inputs):
             pot, y_true, ln, tr = inputs
             ll = crf_log_likelihood(pot, y_true, ln, tr)
-            return -ll
+            return -ll  # negative log-likelihood per sample
 
         def compute_output_shape(self, input_shapes):
             pot_shape = input_shapes[0]
             B = pot_shape[0]
             return (B,)
 
-    nll = CRF_NLL(name="nll_out")([potentials, labels, lens, trans])
+    class DiceLossLayer(keras.layers.Layer):
+        def __init__(self, num_tags: int, smooth: float = 1.0, **kwargs):
+            super().__init__(**kwargs)
+            self.num_tags = num_tags
+            self.smooth = smooth
+
+        def call(self, inputs):
+            pot, y_true, ln, tr = inputs  # pot: [B,T,N], y_true: [B,T], ln: [B], tr: [N,N]
+            T = K.shape(pot)[1]
+            # CRF token marginals
+            probs = crf_marginals(pot, ln, tr)  # [B,T,N]
+            # One-hot labels
+            y_oh = K.one_hot(K.cast(y_true, "int32"), self.num_tags)
+            y_oh = K.cast(y_oh, probs.dtype)
+            # Mask by lengths
+            time_idx = K.cast(K.arange(T), "int32")
+            mask = K.expand_dims(time_idx, 0) < K.expand_dims(K.cast(ln, "int32"), -1)  # [B,T]
+            mask = K.cast(mask, probs.dtype)
+            mask = K.expand_dims(mask, -1)  # [B,T,1]
+            y_oh_m = y_oh * mask
+            probs_m = probs * mask
+            # Micro dice over all tokens and classes
+            intersection = K.sum(y_oh_m * probs_m, axis=(1, 2))  # [B]
+            sums = K.sum(y_oh_m, axis=(1, 2)) + K.sum(probs_m, axis=(1, 2))  # [B]
+            dice = (2.0 * intersection + self.smooth) / (sums + self.smooth)
+            loss = 1.0 - dice  # [B]
+            return loss
+
+        def compute_output_shape(self, input_shapes):
+            pot_shape = input_shapes[0]
+            B = pot_shape[0]
+            return (B,)
+
+    # Build the chosen loss head
+    loss_choice = (loss or "nll").lower()
+    nll_out = CRF_NLL(name="nll_out")([potentials, labels, lens, trans])
+    if loss_choice == "nll":
+        loss_head = keras.layers.Lambda(lambda z: z, name="crf_loss_out")(nll_out)
+    elif loss_choice == "dice":
+        dice_out = DiceLossLayer(num_tags, smooth=dice_smooth, name="dice_out")([potentials, labels, lens, trans])
+        loss_head = keras.layers.Lambda(lambda z: z, name="crf_loss_out")(dice_out)
+    elif loss_choice in ("dice+nll", "joint"):
+        alpha = 0.2 if joint_nll_weight is None else float(joint_nll_weight)
+        dice_out = DiceLossLayer(num_tags, smooth=dice_smooth, name="dice_out")([potentials, labels, lens, trans])
+        # Weighted combination per-sample
+        combo = keras.layers.Lambda(lambda zs: alpha * zs[0] + (1.0 - alpha) * zs[1], name="combo_loss")([nll_out, dice_out])
+        loss_head = keras.layers.Lambda(lambda z: z, name="crf_loss_out")(combo)
+    else:
+        raise ValueError(f"Unsupported loss option: {loss}")
 
     # Name outputs to align with compile/loss/metrics dict keys
     decoded_named = keras.layers.Lambda(lambda z: z, name="decoded_output")(decoded)
-    nll_named = keras.layers.Lambda(lambda z: z, name="crf_log_likelihood_output")(nll)
+    # For backward compatibility, keep the output name 'crf_log_likelihood_output'
+    loss_named = keras.layers.Lambda(lambda z: z, name="crf_log_likelihood_output")(loss_head)
 
     model = keras.Model(
         inputs={"tokens": tokens_named, "labels": labels},
-        outputs={"decoded_output": decoded_named, "crf_log_likelihood_output": nll_named},
+        outputs={"decoded_output": decoded_named, "crf_log_likelihood_output": loss_named},
     )
 
     def zero_loss(y_true, y_pred):

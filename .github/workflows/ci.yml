@@ -32,10 +32,10 @@ jobs:
       - name: Run tests via nox
         env:
           KERAS_BACKEND: ${{ matrix.backend }}
-        run: nox -s tests -- backend=${{ matrix.backend }}
+        run: nox -s tests -p ${{ matrix.python-version }} -- backend=${{ matrix.backend }}
 
       - name: Quickstart smoke via nox (${{ matrix.backend }})
         env:
           KERAS_BACKEND: ${{ matrix.backend }}
-        run: nox -s quickstarts -- backend=${{ matrix.backend }}
+        run: nox -s quickstarts -p ${{ matrix.python-version }} -- backend=${{ matrix.backend }}
 

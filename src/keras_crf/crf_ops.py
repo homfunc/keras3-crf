@@ -127,3 +127,66 @@ def crf_filtered_inputs(potentials, tag_bitmap):
 def crf_constrained_decode(potentials, tag_bitmap, lens, trans):
     filtered = crf_filtered_inputs(potentials, tag_bitmap)
     return crf_decode(filtered, lens, trans)
+
+
+def crf_marginals(potentials, lens, trans):
+    """Compute per-token marginals p(y_t = k | x) via forward-backward.
+
+    Args:
+      potentials: [B, T, N]
+      lens: [B]
+      trans: [N, N]
+
+    Returns:
+      probs: [B, T, N] where probs[b, t, :] sums to 1 for t < lens[b]; zeros for padded steps.
+    """
+    lens = K.cast(lens, "int32")
+    B, T, N = K.shape(potentials)[0], K.shape(potentials)[1], K.shape(potentials)[2]
+    trans_e = K.expand_dims(K.cast(trans, potentials.dtype), 0)  # [1,N,N]
+
+    # Forward pass: log-alpha per time
+    alphas = []
+    a_t = potentials[:, 0, :]  # [B,N]
+    alphas.append(a_t)
+    t = 1
+    while t < T:
+        prev = K.expand_dims(a_t, 2)  # [B,N,1]
+        scores = prev + trans_e       # [B,N,N] (i -> j)
+        new_a = K.logsumexp(scores, axis=1) + potentials[:, t, :]  # [B,N]
+        # Only update for sequences with length > t
+        cond = K.expand_dims((t < lens), -1)  # [B,1]
+        a_t = K.where(cond, new_a, a_t)
+        alphas.append(a_t)
+        t = t + 1
+    # Stack -> [B,T,N]
+    log_alpha = K.stack(alphas, axis=1)
+
+    # Backward pass: log-beta per time
+    betas = [K.zeros((B, N), dtype=potentials.dtype)]  # beta at T-1 is zeros
+    b_t = betas[0]
+    t = T - 2
+    while t >= 0:
+        # next term: beta[t+1] + potentials[:, t+1, :]
+        nxt = b_t + potentials[:, t + 1, :]  # [B,N] (j)
+        # For beta_t(i) = logsumexp_j trans[i,j] + nxt[j]
+        nxt_e = K.expand_dims(nxt, 1)  # [B,1,N]
+        scores = trans_e + nxt_e        # [B,N,N]
+        new_b = K.logsumexp(scores, axis=2)  # [B,N]
+        cond = K.expand_dims((t < (lens - 1)), -1)  # update if t < len-1
+        b_t = K.where(cond, new_b, b_t)
+        betas.append(b_t)
+        t = t - 1
+    betas = betas[::-1]  # reverse to time order 0..T-1
+    log_beta = K.stack(betas, axis=1)  # [B,T,N]
+
+    logZ = crf_log_norm(potentials, lens, trans)  # [B]
+    logZ_e = K.reshape(logZ, (B, 1, 1))
+
+    log_m = log_alpha + log_beta - logZ_e  # [B,T,N]
+    probs = K.exp(log_m)
+
+    # Zero out padded positions
+    time_idx = K.cast(K.arange(T), "int32")
+    mask_bt = K.expand_dims(time_idx, 0) < K.expand_dims(lens, -1)  # [B,T]
+    probs = probs * K.cast(K.expand_dims(mask_bt, -1), probs.dtype)
+    return probs

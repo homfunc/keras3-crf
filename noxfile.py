@@ -56,7 +56,7 @@ def _install_backend(session: nox.Session, backend: str) -> bool:
         return False
 
 
-@nox.session(python=["3.9", "3.10", "3.11", "3.12"])
+@nox.session(python=["3.9", "3.10", "3.11", "3.12", "3.13"])
 def tests(session: nox.Session) -> None:
     requested, passthrough = _parse_backend_posarg(session.posargs)
 
@@ -88,7 +88,7 @@ def tests(session: nox.Session) -> None:
     session.run("pytest", "-q", *passthrough)
 
 
-@nox.session(python=["3.9", "3.10", "3.11", "3.12"])
+@nox.session(python=["3.9", "3.10", "3.11", "3.12", "3.13"])
 def quickstarts(session: nox.Session) -> None:
     """Run the backend-specific quickstart scripts in examples/ as a smoke test."""
     requested, _ = _parse_backend_posarg(session.posargs)
