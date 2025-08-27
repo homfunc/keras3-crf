@@ -22,17 +22,22 @@ BiLSTM-CRF trainer (synthetic dataset)
   - --loss dice        # token-level Dice loss using CRF marginals (forward-backward)
   - --loss dice+nll    # joint: alpha*NLL + (1-alpha)*Dice (use --joint-nll-weight to set alpha)
 
-CoNLL/CleanCoNLL datasets
+CoNLL/CleanCoNLL and MultiCoNER datasets
 - Sample toy files are in examples/data (tiny; for smoke tests only).
 - CleanCoNLL (recommended for a better demo):
-  1) Clone https://github.com/flairNLP/CleanCoNLL and follow its README to generate the cleaned CoNLL-03 splits.
-  2) Then point the trainer to the produced train/valid/test files (standard CoNLL column format):
-     - python examples/bilstm_crf_train.py \
-         --dataset conll \
-         --train /path/to/cleanconll/train.txt \
-         --val   /path/to/cleanconll/valid.txt \
-         --test  /path/to/cleanconll/test.txt \
-         --token-col 0 --tag-col -1 --scheme BIO --epochs 5 --loss nll
+  - Option A: use our helper to fetch/prepare splits:
+    - python examples/data/cleanconll_prepare.py --output-dir examples/data/cleanconll
+  - Option B: clone manually and point to the cleaned splits.
+  - Then run the trainer on the produced files:
+    - python examples/bilstm_crf_train.py \
+        --dataset conll \
+        --train examples/data/cleanconll/train.txt \
+        --val   examples/data/cleanconll/valid.txt \
+        --test  examples/data/cleanconll/test.txt \
+        --token-col 0 --tag-col -1 --scheme BIO --epochs 5 --loss nll
+- MultiCoNER (EN subset):
+  - If you have the English subset locally, e.g. ../multiconer2023/EN_-English, run:
+    - python examples/bilstm_crf_train.py --dataset multiconer --mc-dir ../multiconer2023/EN_-English --epochs 5 --loss dice+nll
 
 Manual, no-helper example (showing custom loss/metrics wiring)
 - python examples/bilstm_crf_manual.py --dataset synthetic --loss dice+nll --joint-nll-weight 0.2

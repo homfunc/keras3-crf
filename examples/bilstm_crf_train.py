@@ -34,10 +34,11 @@ def build_models(vocab_size, num_tags, embedding_dim=64, lstm_units=64, loss="nl
 
 def parse_args():
     p = argparse.ArgumentParser(description="Train BiLSTM-CRF for sequence tagging (Keras Core backend-agnostic)")
-    p.add_argument("--dataset", choices=["synthetic", "conll"], default="synthetic")
+    p.add_argument("--dataset", choices=["synthetic", "conll", "multiconer"], default="synthetic")
     p.add_argument("--train", type=str, help="Path to CoNLL train file (for conll)")
     p.add_argument("--val", type=str, help="Path to CoNLL validation file (for conll)")
     p.add_argument("--test", type=str, help="Path to CoNLL test file (for conll)")
+    p.add_argument("--mc-dir", type=str, help="Path to MultiCoNER directory containing EN_-English splits (for multiconer)")
     p.add_argument("--token-col", type=int, default=0)
     p.add_argument("--tag-col", type=int, default=-1)
     p.add_argument("--lowercase", action="store_true")
@@ -72,11 +73,28 @@ def main():
         vocab_size = args.synthetic_vocab
         id2tag = None
     else:
-        if not (args.train and args.val and args.test):
-            raise SystemExit("--train/--val/--test must be provided for conll dataset")
-        train_s, train_t = read_conll(args.train, args.token_col, args.tag_col, args.lowercase)
-        val_s, val_t = read_conll(args.val, args.token_col, args.tag_col, args.lowercase)
-        test_s, test_t = read_conll(args.test, args.token_col, args.tag_col, args.lowercase)
+        if args.dataset == "conll":
+            if not (args.train and args.val and args.test):
+                raise SystemExit("--train/--val/--test must be provided for conll dataset")
+            train_s, train_t = read_conll(args.train, args.token_col, args.tag_col, args.lowercase)
+            val_s, val_t = read_conll(args.val, args.token_col, args.tag_col, args.lowercase)
+            test_s, test_t = read_conll(args.test, args.token_col, args.tag_col, args.lowercase)
+        elif args.dataset == "multiconer":
+            if not args.mc_dir:
+                raise SystemExit("--mc-dir must be provided for multiconer dataset")
+            from examples.utils.data_multiconer import read_multiconer_dir
+            # Split heuristically: use 80/10/10 split if only a single directory provided
+            all_s, all_t = read_multiconer_dir(args.mc_dir, args.token_col, args.tag_col)
+            n = len(all_s)
+            if n < 3:
+                raise SystemExit("MultiCoNER directory did not yield enough sentences")
+            n_train = int(0.8 * n)
+            n_val = int(0.9 * n)
+            train_s, train_t = all_s[:n_train], all_t[:n_train]
+            val_s, val_t = all_s[n_train:n_val], all_t[n_train:n_val]
+            test_s, test_t = all_s[n_val:], all_t[n_val:]
+        else:
+            raise SystemExit(f"Unsupported dataset: {args.dataset}")
         tok2id, tag2id = build_maps(train_s, train_t)
         X_train, Y_train = encode_and_pad(train_s, train_t, tok2id, tag2id)
         X_val, Y_val = encode_and_pad(val_s, val_t, tok2id, tag2id, max_len=X_train.shape[1])
