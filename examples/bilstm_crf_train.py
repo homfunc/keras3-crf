@@ -82,17 +82,8 @@ def main():
         elif args.dataset == "multiconer":
             if not args.mc_dir:
                 raise SystemExit("--mc-dir must be provided for multiconer dataset")
-            from examples.utils.data_multiconer import read_multiconer_dir
-            # Split heuristically: use 80/10/10 split if only a single directory provided
-            all_s, all_t = read_multiconer_dir(args.mc_dir, args.token_col, args.tag_col)
-            n = len(all_s)
-            if n < 3:
-                raise SystemExit("MultiCoNER directory did not yield enough sentences")
-            n_train = int(0.8 * n)
-            n_val = int(0.9 * n)
-            train_s, train_t = all_s[:n_train], all_t[:n_train]
-            val_s, val_t = all_s[n_train:n_val], all_t[n_train:n_val]
-            test_s, test_t = all_s[n_val:], all_t[n_val:]
+            from examples.utils.data_multiconer import read_multiconer_en_splits
+            train_s, train_t, val_s, val_t, test_s, test_t = read_multiconer_en_splits(args.mc_dir, args.token_col, args.tag_col)
         else:
             raise SystemExit(f"Unsupported dataset: {args.dataset}")
         tok2id, tag2id = build_maps(train_s, train_t)

@@ -9,6 +9,7 @@ Setup
   - TensorFlow: pip install tensorflow
   - PyTorch: pip install torch
   - JAX: pip install "jax"
+- Or install extras for notebooks: pip install -e .[examples]
 - Or use nox to handle backend extras in an isolated session:
   - nox -s tests -- backend=tensorflow  # runs tests with TF
   - nox -s quickstarts -- backend=torch # runs the Torch quickstart
@@ -36,8 +37,12 @@ CoNLL/CleanCoNLL and MultiCoNER datasets
         --test  examples/data/cleanconll/test.txt \
         --token-col 0 --tag-col -1 --scheme BIO --epochs 5 --loss nll
 - MultiCoNER (EN subset):
-  - If you have the English subset locally, e.g. ../multiconer2023/EN_-English, run:
-    - python examples/bilstm_crf_train.py --dataset multiconer --mc-dir ../multiconer2023/EN_-English --epochs 5 --loss dice+nll
+  - Option A: if you placed a zip (e.g., EN-English.zip) under examples/data, extract it:
+    - python examples/data/multiconer_prepare.py --zip examples/data/EN-English.zip --output-dir examples/data/multiconer/EN-English
+  - Option B: copy from your local directory (e.g., ../multiconer2023/EN-English):
+    - python examples/data/multiconer_prepare.py --source-dir ../multiconer2023/EN-English --output-dir examples/data/multiconer/EN-English
+  - Then run the trainer:
+    - python examples/bilstm_crf_train.py --dataset multiconer --mc-dir examples/data/multiconer/EN-English --epochs 5 --loss dice+nll
 
 Manual, no-helper example (showing custom loss/metrics wiring)
 - python examples/bilstm_crf_manual.py --dataset synthetic --loss dice+nll --joint-nll-weight 0.2

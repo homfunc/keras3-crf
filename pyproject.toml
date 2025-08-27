@@ -40,6 +40,10 @@ dev = [
   "nox>=2024.4.15",
   "typeguard>=2.7,<5",
 ]
+# Optional example dependencies (not required for library use)
+examples = [
+  "notebook>=7",
+]
 # Optional backend dependencies
 tensorflow = [
   "tensorflow>=2.15",

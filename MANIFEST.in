@@ -8,4 +8,5 @@ prune keras_crf/tests
 prune build
 prune dist
 global-exclude *.pyc __pycache__/*
+recursive-include examples/data *.zip
 
