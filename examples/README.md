@@ -44,6 +44,21 @@ CoNLL/CleanCoNLL and MultiCoNER datasets
   - Then run the trainer:
     - python examples/bilstm_crf_train.py --dataset multiconer --mc-dir examples/data/multiconer/EN-English --epochs 5 --loss dice+nll
 
+Command-line runner
+- Run the examples programmatically without writing code:
+  - Synthetic:
+    - python examples/train_cli.py synthetic --epochs 2 --loss dice+nll
+  - CleanCoNLL (after preparing):
+    - python examples/train_cli.py conll \
+        --train examples/data/cleanconll/train.txt \
+        --val   examples/data/cleanconll/valid.txt \
+        --test  examples/data/cleanconll/test.txt \
+        --epochs 2 --loss dice+nll
+  - MultiCoNER EN-English (after preparing or copying):
+    - python examples/train_cli.py multiconer \
+        --mc-dir examples/data/multiconer/EN-English \
+        --epochs 2 --loss dice+nll
+
 Manual, no-helper example (showing custom loss/metrics wiring)
 - python examples/bilstm_crf_manual.py --dataset synthetic --loss dice+nll --joint-nll-weight 0.2
 - This example builds the CRF head and loss layer(s) directly without using train_utils,
