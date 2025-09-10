@@ -2,6 +2,7 @@ import keras
 from keras import ops as K
 
 
+@keras.saving.register_keras_serializable(package="examples", name="MaskedTokenAccuracy")
 class MaskedTokenAccuracy(keras.metrics.Metric):
     """Backend-agnostic token accuracy with optional mask using Keras Core.
 

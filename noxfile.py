@@ -48,6 +48,9 @@ def _install_backend(session: nox.Session, backend: str) -> bool:
     try:
         session.log(f"Installing backend extra: .[{extra}]")
         session.install(f".[{extra}]")
+        # Ensure jaxlib is present for JAX CPU wheels on CI
+        if backend == "jax":
+            session.install("jaxlib>=0.4.28")
         session.env["KERAS_BACKEND"] = backend
         session.log(f"KERAS_BACKEND set to '{backend}'")
         return True

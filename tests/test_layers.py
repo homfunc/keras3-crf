@@ -7,7 +7,7 @@ from keras import ops as K
 from keras_crf import CRF
 
 
-def test_layer_mask_right_padding_and_left_padding_error():
+def test_layer_mask_right_and_left_padding_supported():
     # Two sequences, second with right padding at last timestep
     x = np.array(
         [
@@ -25,10 +25,11 @@ def test_layer_mask_right_padding_and_left_padding_error():
     assert K.shape(decoded) == (2, 3)
     assert list(K.convert_to_numpy(seq_len)) == [3, 2]
 
-    # Left padding should raise NotImplementedError
+    # Left padding should be supported as well
     mask_left = np.array([[0, 1, 1], [1, 1, 1]], dtype=bool)
-    with pytest.raises(NotImplementedError):
-        layer(x, mask=mask_left)
+    decoded2, potentials2, seq_len2, kernel2 = layer(x, mask=mask_left)
+    assert K.shape(decoded2) == (2, 3)
+    assert list(K.convert_to_numpy(seq_len2)) == [2, 3]
 
 
 # Note: Training/gradients are backend-specific; we cover training in integration tests elsewhere.
