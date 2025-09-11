@@ -45,7 +45,10 @@ def crf_sequence_score(potentials, tags, lens, trans):
 
 
 def crf_log_norm(potentials, lens, trans):
-    """Forward algorithm (log-normalizer) with true variable-length support using keras.ops.while_loop.
+    """Forward algorithm (log-normalizer) with variable-length support.
+
+    Uses a static Python loop when sequence length T is statically known (JAX-friendly for autodiff),
+    otherwise falls back to keras.ops.while_loop.
 
     Args:
         potentials: [B, T, N]
@@ -57,32 +60,45 @@ def crf_log_norm(potentials, lens, trans):
     """
     lens = K.cast(lens, "int32")
     B = K.shape(potentials)[0]
-    T = K.shape(potentials)[1]
     N = K.shape(potentials)[2]
+    T_static = potentials.shape[1]
+    trans_e = K.expand_dims(K.cast(trans, potentials.dtype), 0)  # [1, N, N]
 
     # Initial alpha at t=0
     alphas0 = potentials[:, 0, :]  # [B, N]
-    trans_e = K.expand_dims(K.cast(trans, potentials.dtype), 0)  # [1, N, N]
 
-    # Precompute time ids once to avoid dynamic indexing ops inside the loop
-    time_ids = K.arange(T)  # [T]
+    if isinstance(T_static, int) and T_static is not None:
+        # Static unrolled loop (JAX autodiff-compatible)
+        alphas = alphas0
+        for t in range(1, T_static):
+            emit_t = potentials[:, t, :]  # [B, N]
+
+            prev = K.expand_dims(alphas, 2)  # [B, N, 1]
+            scores = prev + trans_e          # [B, N, N]
+            new_alphas = K.logsumexp(scores, axis=1) + emit_t  # [B, N]
+
+            cond_b = K.expand_dims(K.less(t, lens), -1)  # [B,1]
+            alphas = K.where(cond_b, new_alphas, alphas)
+        return K.logsumexp(alphas, axis=-1)  # [B]
+
+    # Dynamic fallback using while_loop
+    T = K.shape(potentials)[1]
+    time_ids = K.arange(T)
 
     def cond(t, _alphas):
         return K.less(t, T)
 
-    def body(t, alphas):  # t: int32 scalar, alphas: [B, N]
-        # Build a mask to extract potentials[:, t, :] without tensor indexing
-        eq = K.equal(time_ids, t)          # [T]
-        step_mask = K.cast(eq, potentials.dtype)  # [T]
-        step_mask = K.reshape(step_mask, (1, T, 1))  # [1, T, 1]
+    def body(t, alphas):
+        eq = K.equal(time_ids, t)
+        step_mask = K.cast(eq, potentials.dtype)
+        step_mask = K.expand_dims(K.expand_dims(step_mask, 0), -1)
         emit_t = K.sum(potentials * step_mask, axis=1)  # [B, N]
 
-        prev = K.expand_dims(alphas, 2)  # [B, N, 1]
-        scores = prev + trans_e          # [B, N, N] (i -> j)
-        new_alphas = K.logsumexp(scores, axis=(1,)) + emit_t  # [B, N]
+        prev = K.expand_dims(alphas, 2)
+        scores = prev + trans_e
+        new_alphas = K.logsumexp(scores, axis=1) + emit_t
 
-        # Only update sequences where t < len
-        cond_b = K.expand_dims(K.less(t, lens), -1)  # [B, 1]
+        cond_b = K.expand_dims(K.less(t, lens), -1)
         alphas = K.where(cond_b, new_alphas, alphas)
         return (t + K.convert_to_tensor(1, dtype="int32"), alphas)
 
@@ -92,7 +108,7 @@ def crf_log_norm(potentials, lens, trans):
         loop_vars=(K.convert_to_tensor(1, dtype="int32"), alphas0),
     )
 
-    return K.logsumexp(alphasT, axis=(-1,))  # [B]
+    return K.logsumexp(alphasT, axis=-1)  # [B]
 
 
 def crf_log_likelihood(potentials, tags, lens, trans):
@@ -102,7 +118,10 @@ def crf_log_likelihood(potentials, tags, lens, trans):
 
 
 def crf_decode(potentials, lens, trans):
-    """Backend-agnostic Viterbi decode using keras.ops.while_loop.
+    """Backend-agnostic Viterbi decode.
+
+    Uses a static Python loop when sequence length T is statically known (JAX-friendly for autodiff),
+    otherwise falls back to keras.ops.while_loop.
 
     Args:
         potentials: [B, T, N]
@@ -115,26 +134,60 @@ def crf_decode(potentials, lens, trans):
     """
     lens = K.cast(lens, "int32")
     B = K.shape(potentials)[0]
-    T = K.shape(potentials)[1]
     N = K.shape(potentials)[2]
+    T_static = potentials.shape[1]
 
     trans_e = K.expand_dims(K.cast(trans, potentials.dtype), 0)  # [1,N,N]
 
-    # Forward pass to compute alphas and backpointers for each time
-    alphas0 = potentials[:, 0, :]  # [B,N]
-    time_ids = K.arange(T)  # [T]
+    # Forward pass
+    alphas = potentials[:, 0, :]  # [B,N]
+
+    if isinstance(T_static, int) and T_static is not None:
+        backp_list = [K.zeros((B, N), dtype="int32") for _ in range(T_static)]  # t=0 stays zeros
+        for t in range(1, T_static):
+            emit_t = potentials[:, t, :]  # [B,N]
+
+            prev = K.expand_dims(alphas, 2)   # [B,N,1]
+            scores = prev + trans_e           # [B,N,N]
+            best_prev = K.argmax(scores, axis=1)           # [B,N]
+            alphas_new = K.max(scores, axis=1) + emit_t    # [B,N]
+
+            cond_b = K.expand_dims(K.less(t, lens), -1)
+            alphas = K.where(cond_b, alphas_new, alphas)
+
+            backp_list[t] = K.cast(best_prev, "int32")
+
+        backp_all = K.stack(backp_list, axis=0)  # [T,B,N]
+        best_score = K.max(alphas, axis=-1)      # [B]
+        last_tags = K.argmax(alphas, axis=-1)    # [B]
+
+        # Backward pass: collect tags per time step then stack
+        tags_list = [K.zeros((B,), dtype="int32") for _ in range(T_static)]
+        for t in range(T_static - 1, -1, -1):
+            tags_list[t] = last_tags  # [B]
+            bp_t = backp_list[t]      # [B,N]
+            one_hot_idx = K.one_hot(last_tags, K.shape(bp_t)[1])  # [B,N]
+            prev_tag_f = K.sum(K.cast(bp_t, potentials.dtype) * K.cast(one_hot_idx, potentials.dtype), axis=1)
+            prev_tag = K.cast(prev_tag_f, "int32")
+            last_tags = K.where(K.less(t, lens), prev_tag, last_tags)
+
+        tags_out = K.transpose(K.stack(tags_list, axis=0))  # [B,T]
+        return tags_out, best_score
+
+    # Dynamic fallback using while_loop
+    T = K.shape(potentials)[1]
+    time_ids = K.arange(T)
 
     # Preallocate backpointers: [T, B, N]; t=0 stays zeros
-    backp_all = K.zeros((T, B, N), dtype="int32")
+    backp_all = K.zeros((T, K.shape(potentials)[0], K.shape(potentials)[2]), dtype="int32")
 
     def cond_fwd(t, _alphas, _backp):
         return K.less(t, T)
 
     def body_fwd(t, alphas, backp):
-        # emit at time t
-        eq = K.equal(time_ids, t)  # [T]
-        step_mask = K.cast(eq, potentials.dtype)  # [T]
-        step_mask = K.reshape(step_mask, (1, T, 1))  # [1,T,1]
+        eq = K.equal(time_ids, t)
+        step_mask = K.cast(eq, potentials.dtype)
+        step_mask = K.expand_dims(K.expand_dims(step_mask, 0), -1)
         emit_t = K.sum(potentials * step_mask, axis=1)  # [B,N]
 
         prev = K.expand_dims(alphas, 2)   # [B,N,1]
@@ -145,8 +198,7 @@ def crf_decode(potentials, lens, trans):
         cond_b = K.expand_dims(K.less(t, lens), -1)    # [B,1]
         alphas = K.where(cond_b, alphas_new, alphas)   # [B,N]
 
-        # Write backpointer at time t
-        mask_t = K.cast(K.reshape(eq, (T, 1, 1)), backp.dtype)  # [T,1,1]
+        mask_t = K.cast(K.expand_dims(K.expand_dims(eq, 1), 2), backp.dtype)  # [T,1,1]
         best_prev_i32 = K.cast(best_prev, backp.dtype)          # [B,N]
         best_prev_e = K.expand_dims(best_prev_i32, 0)           # [1,B,N]
         backp = backp * (K.ones_like(backp) - mask_t) + best_prev_e * mask_t  # [T,B,N]
@@ -156,35 +208,30 @@ def crf_decode(potentials, lens, trans):
     _, alphasT, backp_all = K.while_loop(
         cond=cond_fwd,
         body=body_fwd,
-        loop_vars=(K.convert_to_tensor(1, dtype="int32"), alphas0, backp_all),
+        loop_vars=(K.convert_to_tensor(1, dtype="int32"), alphas, backp_all),
     )
 
-    # Best score and last tags at T-1
     best_score = K.max(alphasT, axis=-1)   # [B]
     last_tags = K.argmax(alphasT, axis=-1) # [B]
 
-    # Backward pass: build tags_out [B,T]
     tags_out = K.zeros((B, T), dtype="int32")
 
     def cond_bwd(t, _last_tags, _tags_out):
         return K.greater_equal(t, K.convert_to_tensor(0, dtype="int32"))
 
     def body_bwd(t, last_t, tags):
-        # Write tag at time t
-        eq = K.equal(time_ids, t)  # [T]
-        mask_t = K.cast(K.reshape(eq, (1, T)), tags.dtype)  # [1,T]
-        last_e = K.expand_dims(last_t, 1)  # [B,1]
+        eq = K.equal(time_ids, t)
+        mask_t = K.cast(K.expand_dims(eq, 0), tags.dtype)
+        last_e = K.expand_dims(last_t, 1)
         tags = tags * (K.ones_like(tags) - mask_t) + last_e * mask_t
 
-        # Update last_t for previous time (t-1)
-        # Select backpointer slice at time t without tensor indexing
-        eq_t = K.equal(time_ids, t)            # [T]
-        mask_t3 = K.cast(K.reshape(eq_t, (T, 1, 1)), backp_all.dtype)  # [T,1,1]
-        bp_t = K.sum(backp_all * mask_t3, axis=0)  # [B,N]
-        one_hot_idx = K.one_hot(last_t, N)  # [B,N]
-        prev_tag_f = K.sum(K.cast(bp_t, "float32") * K.cast(one_hot_idx, "float32"), axis=1)
+        eq_t = K.equal(time_ids, t)
+        mask_t3 = K.cast(K.expand_dims(K.expand_dims(eq_t, 1), 2), backp_all.dtype)
+        bp_t = K.sum(backp_all * mask_t3, axis=0)
+        one_hot_idx = K.one_hot(last_t, N)
+        prev_tag_f = K.sum(K.cast(bp_t, potentials.dtype) * K.cast(one_hot_idx, potentials.dtype), axis=1)
         prev_tag = K.cast(prev_tag_f, "int32")
-        cond_update = K.less(t, lens)  # [B]
+        cond_update = K.less(t, lens)
         last_t = K.where(cond_update, prev_tag, last_t)
 
         return (t - K.convert_to_tensor(1, dtype="int32"), last_t, tags)
@@ -211,7 +258,10 @@ def crf_constrained_decode(potentials, tag_bitmap, lens, trans):
 
 
 def crf_marginals(potentials, lens, trans):
-    """Compute per-token marginals p(y_t = k | x) via forward-backward using keras.ops.while_loop.
+    """Compute per-token marginals p(y_t = k | x) via forward-backward.
+
+    Uses a static Python loop when T is statically known (JAX-friendly for autodiff),
+    otherwise falls back to keras.ops.while_loop.
 
     Args:
       potentials: [B, T, N]
@@ -223,37 +273,67 @@ def crf_marginals(potentials, lens, trans):
     """
     lens = K.cast(lens, "int32")
     B = K.shape(potentials)[0]
-    T = K.shape(potentials)[1]
     N = K.shape(potentials)[2]
+    T_static = potentials.shape[1]
     trans_e = K.expand_dims(K.cast(trans, potentials.dtype), 0)  # [1,N,N]
 
-    time_ids = K.arange(T)  # [T]
+    if isinstance(T_static, int) and T_static is not None:
+        # Forward
+        a_t = potentials[:, 0, :]
+        alpha_list = [a_t]
+        for t in range(1, T_static):
+            emit_t = potentials[:, t, :]  # [B,N]
+            prev = K.expand_dims(a_t, 2)
+            scores = prev + trans_e
+            new_a = K.logsumexp(scores, axis=1) + emit_t
+            a_t = K.where(K.expand_dims(K.less(t, lens), -1), new_a, a_t)
+            alpha_list.append(a_t)
+        log_alpha = K.stack(alpha_list, axis=1)  # [B,T,N]
+
+        # Backward
+        b_t = K.zeros((B, K.shape(potentials)[2]), dtype=potentials.dtype)  # at T-1
+        beta_list = [None] * T_static
+        beta_list[T_static - 1] = b_t
+        for t in range(T_static - 2, -1, -1):
+            emit_tp1 = potentials[:, t + 1, :]  # [B,N]
+            nxt = b_t + emit_tp1
+            nxt_e = K.expand_dims(nxt, 1)
+            scores = trans_e + nxt_e
+            new_b = K.logsumexp(scores, axis=2)
+            b_t = K.where(K.expand_dims(K.less(t, lens - K.ones_like(lens)), -1), new_b, b_t)
+            beta_list[t] = b_t
+        log_beta = K.stack(beta_list, axis=1)  # [B,T,N]
+
+        logZ = crf_log_norm(potentials, lens, trans)  # [B]
+        log_m = log_alpha + log_beta - K.reshape(logZ, (B, 1, 1))
+        probs = K.exp(log_m)
+        mask_bt = (K.expand_dims(K.arange(T_static), 0) < K.expand_dims(lens, -1))
+        probs = probs * K.cast(K.expand_dims(mask_bt, -1), probs.dtype)
+        return probs
+
+    # Dynamic fallback using while_loop
+    T = K.shape(potentials)[1]
+    time_ids = K.arange(T)
 
     # Forward pass: log-alpha per time, write into alpha_out [B,T,N]
-    alpha_out = K.zeros((B, T, N), dtype=potentials.dtype)
+    alpha_out = K.zeros((B, T, K.shape(potentials)[2]), dtype=potentials.dtype)
     a_t0 = potentials[:, 0, :]  # [B,N]
-    # write t=0
-    mask0 = K.cast(K.reshape(K.equal(time_ids, 0), (1, T, 1)), potentials.dtype)
+    mask0 = K.cast(K.expand_dims(K.expand_dims(K.equal(time_ids, 0), 0), -1), potentials.dtype)
     alpha_out = alpha_out * (K.ones_like(alpha_out) - mask0) + K.expand_dims(a_t0, 1) * mask0
 
     def cond_fwd(t, _a_t, _alpha_out):
         return K.less(t, T)
 
     def body_fwd(t, a_t, alpha_out):
-        # emit at time t
         eq = K.equal(time_ids, t)
         step_mask = K.cast(eq, potentials.dtype)
-        step_mask = K.reshape(step_mask, (1, T, 1))
-        emit_t = K.sum(potentials * step_mask, axis=1)  # [B,N]
-
-        prev = K.expand_dims(a_t, 2)  # [B,N,1]
-        scores = prev + trans_e       # [B,N,N]
-        new_a = K.logsumexp(scores, axis=1) + emit_t  # [B,N]
-        cond_b = K.expand_dims(K.less(t, lens), -1)   # [B,1]
-        a_t = K.where(cond_b, new_a, a_t)
-
-        # write alpha at time t
-        mask_t = K.cast(K.reshape(eq, (1, T, 1)), alpha_out.dtype)
+        step_mask = K.expand_dims(K.expand_dims(step_mask, 0), -1)
+        emit_t = K.sum(potentials * step_mask, axis=1)
+        prev = K.expand_dims(a_t, 2)
+        scores = prev + trans_e
+        new_a = K.logsumexp(scores, axis=1) + emit_t
+        a_t = K.where(K.expand_dims(K.less(t, lens), -1), new_a, a_t)
+        mask_t = K.cast(K.expand_dims(K.expand_dims(eq, 0), -1), alpha_out.dtype)
         alpha_out = alpha_out * (K.ones_like(alpha_out) - mask_t) + K.expand_dims(a_t, 1) * mask_t
         return (t + K.convert_to_tensor(1, dtype="int32"), a_t, alpha_out)
 
@@ -264,34 +344,27 @@ def crf_marginals(potentials, lens, trans):
     )
 
     # Backward pass: log-beta per time into beta_out [B,T,N]
-    beta_out = K.zeros((B, T, N), dtype=potentials.dtype)
-    b_t_Tm1 = K.zeros((B, N), dtype=potentials.dtype)  # beta at T-1
-    # write t=T-1
-    maskTm1 = K.cast(K.reshape(K.equal(time_ids, T - K.convert_to_tensor(1, dtype="int32")), (1, T, 1)), potentials.dtype)
+    beta_out = K.zeros((B, T, K.shape(potentials)[2]), dtype=potentials.dtype)
+    b_t_Tm1 = K.zeros((B, K.shape(potentials)[2]), dtype=potentials.dtype)
+    maskTm1 = K.cast(K.expand_dims(K.expand_dims(K.equal(time_ids, T - K.convert_to_tensor(1, dtype="int32")), 0), -1), potentials.dtype)
     beta_out = beta_out * (K.ones_like(beta_out) - maskTm1) + K.expand_dims(b_t_Tm1, 1) * maskTm1
 
     def cond_bwd(t, _b_t, _beta_out):
         return K.greater_equal(t, K.convert_to_tensor(0, dtype="int32"))
 
     def body_bwd(t, b_t, beta_out):
-        # nxt = b_{t+1} + emit at t+1
         eq_tp1 = K.equal(time_ids, t + K.convert_to_tensor(1, dtype="int32"))
         step_mask = K.cast(eq_tp1, potentials.dtype)
-        step_mask = K.reshape(step_mask, (1, T, 1))
-        emit_tp1 = K.sum(potentials * step_mask, axis=1)  # [B,N]
+        step_mask = K.expand_dims(K.expand_dims(step_mask, 0), -1)
+        emit_tp1 = K.sum(potentials * step_mask, axis=1)
         nxt = b_t + emit_tp1
-
-        nxt_e = K.expand_dims(nxt, 1)  # [B,1,N]
-        scores = trans_e + nxt_e       # [B,N,N]
-        new_b = K.logsumexp(scores, axis=2)  # [B,N]
-        cond_b = K.expand_dims(K.less(t, lens - K.ones_like(lens)), -1)  # t < len-1
-        b_t = K.where(cond_b, new_b, b_t)
-
-        # write beta at time t
+        nxt_e = K.expand_dims(nxt, 1)
+        scores = trans_e + nxt_e
+        new_b = K.logsumexp(scores, axis=2)
+        b_t = K.where(K.expand_dims(K.less(t, lens - K.ones_like(lens)), -1), new_b, b_t)
         eq_t = K.equal(time_ids, t)
-        mask_t = K.cast(K.reshape(eq_t, (1, T, 1)), beta_out.dtype)
+        mask_t = K.cast(K.expand_dims(K.expand_dims(eq_t, 0), -1), beta_out.dtype)
         beta_out = beta_out * (K.ones_like(beta_out) - mask_t) + K.expand_dims(b_t, 1) * mask_t
-
         return (t - K.convert_to_tensor(1, dtype="int32"), b_t, beta_out)
 
     _, _, log_beta = K.while_loop(
@@ -300,14 +373,9 @@ def crf_marginals(potentials, lens, trans):
         loop_vars=(T - K.convert_to_tensor(2, dtype="int32"), b_t_Tm1, beta_out),
     )
 
-    logZ = crf_log_norm(potentials, lens, trans)  # [B]
-    logZ_e = K.reshape(logZ, (B, 1, 1))
-
-    log_m = log_alpha + log_beta - logZ_e  # [B,T,N]
+    logZ = crf_log_norm(potentials, lens, trans)
+    log_m = log_alpha + log_beta - K.reshape(logZ, (B, 1, 1))
     probs = K.exp(log_m)
-
-    # Zero out padded positions
-    time_idx = K.cast(time_ids, "int32")
-    mask_bt = K.expand_dims(time_idx, 0) < K.expand_dims(lens, -1)  # [B,T]
+    mask_bt = (K.expand_dims(K.cast(K.arange(T), "int32"), 0) < K.expand_dims(lens, -1))
     probs = probs * K.cast(K.expand_dims(mask_bt, -1), probs.dtype)
     return probs
