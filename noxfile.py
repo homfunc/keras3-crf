@@ -126,3 +126,32 @@ def quickstarts(session: nox.Session) -> None:
     else:
         session.error(f"Unsupported backend '{backend}' for quickstarts.")
 
+
+@nox.session(name="clean")
+def clean(session: nox.Session) -> None:
+    """Remove local build/test artifacts and nox virtualenvs.
+
+    Usage:
+        nox -s clean
+    """
+    import shutil
+    import glob
+    import os
+
+    # Paths/directories to remove
+    paths = [
+        ".nox",
+        ".pytest_cache",
+        "build",
+        "dist",
+    ]
+
+    for p in paths:
+        session.log(f"Removing {p} ...")
+        shutil.rmtree(p, ignore_errors=True)
+
+    # Remove any egg-info directories
+    for egg in glob.glob("*.egg-info"):
+        session.log(f"Removing {egg} ...")
+        shutil.rmtree(egg, ignore_errors=True)
+
