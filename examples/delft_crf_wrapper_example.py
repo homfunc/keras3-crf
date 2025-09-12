@@ -192,8 +192,8 @@ def parse_args():
                    help="Which CRF loss head to use")
     p.add_argument("--alpha", type=float, default=0.2, help="Alpha for joint loss (weight on NLL)")
     p.add_argument("--smooth", type=float, default=1.0, help="Smoothing for Dice in dice/joint")
-    p.add_argument("--run-eagerly", choices=["true", "false"], default="true",
-                   help="Whether to compile the training model with run_eagerly=True (default true)")
+    p.add_argument("--run-eagerly", choices=["true", "false"], default="false",
+                   help="Whether to compile the training model with run_eagerly=True (default false)")
     return p.parse_args()
 
 

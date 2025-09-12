@@ -35,6 +35,11 @@ def _parse_backend_posarg(posargs: list[str]) -> tuple[str | None, list[str]]:
     for arg in posargs:
         if arg.startswith("backend="):
             requested = arg.split("=", 1)[1].strip()
+            if requested not in BACKEND_EXTRAS:
+                session.error(
+                    f"Unknown backend '{requested}'. Valid: {list(BACKEND_EXTRAS)}. "
+                    f"Try a different backend (backend=jax|tensorflow|torch)."
+                )
         else:
             passthrough.append(arg)
     return requested, passthrough
@@ -48,9 +53,6 @@ def _install_backend(session: nox.Session, backend: str) -> bool:
     try:
         session.log(f"Installing backend extra: .[{extra}]")
         session.install(f".[{extra}]")
-        # Ensure jaxlib is present for JAX CPU wheels on CI
-        if backend == "jax":
-            session.install("jaxlib>=0.4.28")
         session.env["KERAS_BACKEND"] = backend
         session.log(f"KERAS_BACKEND set to '{backend}'")
         return True
@@ -59,7 +61,9 @@ def _install_backend(session: nox.Session, backend: str) -> bool:
         return False
 
 
-@nox.session(python=["3.9", "3.10", "3.11", "3.12", "3.13"])
+@nox.session(reuse_venv=True,
+             venv_backend='micromamba|mamba|conda|virtualenv',
+             python=["3.9", "3.10", "3.11", "3.12", "3.13"])
 def tests(session: nox.Session) -> None:
     requested, passthrough = _parse_backend_posarg(session.posargs)
 
@@ -91,7 +95,9 @@ def tests(session: nox.Session) -> None:
     session.run("pytest", "-q", *passthrough)
 
 
-@nox.session(python=["3.9", "3.10", "3.11", "3.12", "3.13"])
+@nox.session(reuse_venv=True,
+             venv_backend='micromamba|mamba|conda|virtualenv',
+             python=["3.9", "3.10", "3.11", "3.12", "3.13"])
 def quickstarts(session: nox.Session) -> None:
     """Run the backend-specific quickstart scripts in examples/ as a smoke test."""
     requested, _ = _parse_backend_posarg(session.posargs)
