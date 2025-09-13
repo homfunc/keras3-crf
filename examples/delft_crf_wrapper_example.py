@@ -137,20 +137,20 @@ def build_delft_style_models(
     crf = CRF(num_tags, use_boundary=use_boundary)
     # Explicit token mask (token != 0) to avoid mask-broadcast quirks through merges
     token_mask = keras.layers.Lambda(lambda t: K.not_equal(t, 0), name="token_mask")(tokens_in)
-    decoded, potentials, crf_lengths, _ = crf(feats, mask=token_mask)
+    decoded, potentials, crf_lengths, trans_out = crf(feats, mask=token_mask)
 
     # Also compute numeric lengths directly from the token mask for loss
     lengths_num = keras.layers.Lambda(lambda m: K.sum(K.cast(m, "int32"), axis=1), name="lengths_num")(token_mask)
 
     # Choose loss head
     if loss_type == "nll":
-        loss_vec = CRFNLLHead(name="crf_loss_vec")([potentials, labels_in, lengths_num, crf.trans])
+        loss_vec = CRFNLLHead(name="crf_loss_vec")([potentials, labels_in, lengths_num, trans_out])
         loss_reducer = CRFNLLLoss()
     elif loss_type == "dice":
-        loss_vec = CRFDiceHead(smooth=float(smooth), name="crf_loss_vec")([potentials, labels_in, lengths_num, crf.trans])
+        loss_vec = CRFDiceHead(smooth=float(smooth), name="crf_loss_vec")([potentials, labels_in, lengths_num, trans_out])
         loss_reducer = CRFDiceLoss()
     elif loss_type == "joint":
-        loss_vec = CRFJointDiceNLLHead(alpha=float(alpha), smooth=float(smooth), name="crf_loss_vec")([potentials, labels_in, lengths_num, crf.trans])
+        loss_vec = CRFJointDiceNLLHead(alpha=float(alpha), smooth=float(smooth), name="crf_loss_vec")([potentials, labels_in, lengths_num, trans_out])
         loss_reducer = CRFJointDiceNLLLoss()
     else:
         raise ValueError(f"Unknown loss_type: {loss_type}")

@@ -71,6 +71,11 @@ class _LengthsFromFullTime:
 class CRFNLLHead(keras.layers.Layer):
     """Compute per-sample CRF negative log-likelihood: outputs [B]."""
 
+    def compute_output_shape(self, input_shape):
+        pot_shape = input_shape[0]
+        # pot_shape is (B, T, N) -> output (B,)
+        return (pot_shape[0],)
+
     def call(self, inputs):
         potentials, y_true, lengths, transitions = inputs
         ll = crf_log_likelihood(
@@ -89,6 +94,10 @@ class CRFDiceHead(keras.layers.Layer):
     def __init__(self, smooth: float = 1.0, **kwargs):
         super().__init__(**kwargs)
         self.smooth = float(smooth)
+
+    def compute_output_shape(self, input_shape):
+        pot_shape = input_shape[0]
+        return (pot_shape[0],)
 
     def call(self, inputs):
         potentials, y_true, lengths, transitions = inputs
@@ -120,6 +129,10 @@ class CRFJointDiceNLLHead(keras.layers.Layer):
         super().__init__(**kwargs)
         self.alpha = float(alpha)
         self.smooth = float(smooth)
+
+    def compute_output_shape(self, input_shape):
+        pot_shape = input_shape[0]
+        return (pot_shape[0],)
 
     def call(self, inputs):
         potentials, y_true, lengths, transitions = inputs

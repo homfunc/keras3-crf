@@ -90,7 +90,9 @@ class CRF(Layer):
             decoded = K.argmax(potentials, axis=-1)
         else:
             decoded, _ = k_crf_decode(potentials, lens, self.trans)
-        return decoded, potentials, lens, self.trans
+        # Ensure transitions are returned as a graph-tied tensor, not a raw backend variable
+        trans_out = self.trans + K.zeros_like(self.trans)
+        return decoded, potentials, lens, trans_out
 
     def _mask_to_lengths(self, mask, potentials):
         # Normalize mask: Keras may pass a list (one per input). Use first non-None.
