@@ -64,6 +64,12 @@ def crf_log_norm(potentials, lens, trans):
 
     # Initial alpha at t=0 and emissions for t=1..T-1 in time-major
     alphas0 = potentials[:, 0, :]  # [B, N]
+
+    # Fast path when T == 1 to avoid scan with empty xs on some backends
+    T_static = potentials.shape[1]
+    if isinstance(T_static, int) and T_static == 1:
+        return K.logsumexp(alphas0, axis=-1)
+
     ems = potentials[:, 1:, :]     # [B, T-1, N]
     ems_tm = K.transpose(ems, (1, 0, 2))  # [T-1, B, N]
 
@@ -108,6 +114,15 @@ def crf_decode(potentials, lens, trans):
     T = K.shape(potentials)[1]
     N = K.shape(potentials)[2]
 
+    # Fast path for single-timestep sequences to avoid scan with empty xs on some backends
+    T_static = potentials.shape[1]
+    if isinstance(T_static, int) and T_static == 1:
+        alphas0 = potentials[:, 0, :]
+        best_score = K.max(alphas0, axis=-1)
+        last_tags = K.argmax(alphas0, axis=-1)
+        tags_out = K.expand_dims(K.cast(last_tags, "int32"), 1)
+        return tags_out, best_score
+
     trans_e = K.expand_dims(K.cast(trans, potentials.dtype), 0)  # [1,N,N]
 
     # Emissions time-major for t=1..T-1 and validity mask
@@ -117,63 +132,25 @@ def crf_decode(potentials, lens, trans):
     valid_bt = (K.expand_dims(time_idx, 0) < K.expand_dims(lens, -1))  # [B,T]
     valid_tm = K.transpose(valid_bt[:, 1:], (1, 0))  # [T-1,B]
 
-    # Forward scan to compute alphas and backpointers. Prefer Option B (carry buffer) when shapes are static;
-    # otherwise fall back to Option A (ys stream cast to float then back to int32).
+    # Forward scan to compute alphas and backpointers using a pure functional style
+    # to avoid in-place slice updates (which trigger warnings on Torch backend).
     alphas0 = potentials[:, 0, :]  # [B,N]
 
-    B_static = potentials.shape[0]
-    T_static = potentials.shape[1]
-    N_static = potentials.shape[2]
-    have_static = (
-        isinstance(B_static, int) and B_static is not None and
-        isinstance(T_static, int) and T_static is not None and
-        isinstance(N_static, int) and N_static is not None
-    )
+    # Return backpointers as float ys to keep structure/dtype uniform across backends,
+    # cast to int32 after the scan completes.
+    pot_dtype = potentials.dtype
 
-    if have_static:
-        # Option B: preallocate int32 backpointer buffer [T-1, B, N]
-        bp_buf0 = K.zeros((T_static - 1, B_static, N_static), dtype="int32")
-        t0 = K.convert_to_tensor(1, dtype="int32")
+    def fwd_step(alphas, inputs):
+        emit_t, valid_t = inputs  # [B,N], [B]
+        prev = K.expand_dims(alphas, 2)  # [B,N,1]
+        scores = prev + trans_e          # [B,N,N]
+        best_prev = K.argmax(scores, axis=1)           # [B,N]
+        alphas_new = K.max(scores, axis=1) + emit_t    # [B,N]
+        alphas = K.where(K.expand_dims(valid_t, -1), alphas_new, alphas)
+        return alphas, K.cast(best_prev, pot_dtype)
 
-        def fwd_step(carry, inputs):
-            alphas, bp_buf, t = carry
-            emit_t, valid_t = inputs  # [B,N], [B]
-            prev = K.expand_dims(alphas, 2)  # [B,N,1]
-            scores = prev + trans_e          # [B,N,N]
-            best_prev = K.argmax(scores, axis=1)           # [B,N]
-            alphas_new = K.max(scores, axis=1) + emit_t    # [B,N]
-            alphas = K.where(K.expand_dims(valid_t, -1), alphas_new, alphas)
-            # Write best_prev into buffer at time index (t-1)
-            best_prev_e = K.expand_dims(K.cast(best_prev, "int32"), 0)  # [1,B,N]
-            bp_buf = K.slice_update(
-                bp_buf,
-                start_indices=(t - K.convert_to_tensor(1, dtype="int32"), 0, 0),
-                updates=best_prev_e,
-            )
-            # Increment t
-            t = t + K.convert_to_tensor(1, dtype="int32")
-            # Return ys with identical structure as carry to satisfy TF scan structure checks
-            return (alphas, bp_buf, t), (alphas, bp_buf, t)
-
-        (carry_final, _ys) = K.scan(
-            fwd_step, init=(alphas0, bp_buf0, t0), xs=(ems_tm, valid_tm)
-        )
-        alphasT, backp_tm, _t_final = carry_final
-    else:
-        # Option A: return backpointers as float ys to avoid TF dtype issues, cast to int after scan
-        pot_dtype = potentials.dtype
-
-        def fwd_step(alphas, inputs):
-            emit_t, valid_t = inputs  # [B,N], [B]
-            prev = K.expand_dims(alphas, 2)  # [B,N,1]
-            scores = prev + trans_e          # [B,N,N]
-            best_prev = K.argmax(scores, axis=1)           # [B,N]
-            alphas_new = K.max(scores, axis=1) + emit_t    # [B,N]
-            alphas = K.where(K.expand_dims(valid_t, -1), alphas_new, alphas)
-            return alphas, K.cast(best_prev, pot_dtype)
-
-        alphasT, backp_tm = K.scan(fwd_step, alphas0, xs=(ems_tm, valid_tm))
-        backp_tm = K.cast(backp_tm, "int32")
+    alphasT, backp_tm = K.scan(fwd_step, alphas0, xs=(ems_tm, valid_tm))
+    backp_tm = K.cast(backp_tm, "int32")
 
     # Last tags and best score
     best_score = K.max(alphasT, axis=-1)   # [B]

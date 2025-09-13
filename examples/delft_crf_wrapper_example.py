@@ -101,9 +101,15 @@ def build_delft_style_models(
 ):
     """Build training and inference models.
 
-    - Training model: outputs decoded tags and a per-sample CRF loss vector (for loss).
-    - Inference model: outputs decoded tags only.
     """
+    # Mask-preserving identity to avoid Lambda mask drop warning on decoded head
+    class _Identity(keras.layers.Layer):
+        def __init__(self, **kw):
+            super().__init__(**kw)
+            self.supports_masking = True
+        def call(self, x):
+            return x
+
     # Inputs (names loosely mirror DeLFT)
     tokens_in = keras.Input(shape=(None,), dtype="int32", name="tokens")
     char_input = keras.Input(shape=(None, max_char), dtype="int32", name="char_input")
@@ -155,7 +161,7 @@ def build_delft_style_models(
     else:
         raise ValueError(f"Unknown loss_type: {loss_type}")
 
-    decoded_named = keras.layers.Lambda(lambda z: z, name="decoded_output")(decoded)
+    decoded_named = _Identity(name="decoded_output")(decoded)
 
     # Training model: two outputs (decoded + per-sample loss vector)
     train_model = keras.Model(inputs=[tokens_in, char_input, labels_in], outputs=[decoded_named, loss_vec], name="delft_crf_train")

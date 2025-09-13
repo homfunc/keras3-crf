@@ -90,8 +90,8 @@ class CRF(Layer):
             decoded = K.argmax(potentials, axis=-1)
         else:
             decoded, _ = k_crf_decode(potentials, lens, self.trans)
-        # Ensure transitions are returned as a graph-tied tensor, not a raw backend variable
-        trans_out = self.trans + K.zeros_like(self.trans)
+        # Ensure transitions are returned as a graph-tied tensor across backends
+        trans_out = K.convert_to_tensor(self.trans)
         return decoded, potentials, lens, trans_out
 
     def _mask_to_lengths(self, mask, potentials):
