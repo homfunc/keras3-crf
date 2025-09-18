@@ -45,16 +45,13 @@ def crf_sequence_score(potentials, tags, lens, trans):
 
 
 def crf_log_norm(potentials, lens, trans):
-    """Forward algorithm (log-normalizer) with variable-length support using keras.ops.scan.
+    """Forward algorithm (log-normalizer) with variable-length support.
 
-    Args:
-        potentials: [B, T, N]
-        lens: [B]
-        trans: [N, N]
-
-    Returns:
-        logZ: [B]
+    For TensorFlow, use while_loop to improve graph-mode compatibility.
+    For JAX and Torch, use scan which performs well and compiles reliably.
     """
+    bk = keras.config.backend()
+
     lens = K.cast(lens, "int32")
     B = K.shape(potentials)[0]
     N = K.shape(potentials)[2]
@@ -62,33 +59,48 @@ def crf_log_norm(potentials, lens, trans):
 
     trans_e = K.expand_dims(K.cast(trans, potentials.dtype), 0)  # [1, N, N]
 
-    # Initial alpha at t=0 and emissions for t=1..T-1 in time-major
+    # Initial alpha at t=0
     alphas0 = potentials[:, 0, :]  # [B, N]
 
-    # Fast path when T == 1 to avoid scan with empty xs on some backends
+    # Fast path when T == 1
     T_static = potentials.shape[1]
     if isinstance(T_static, int) and T_static == 1:
         return K.logsumexp(alphas0, axis=-1)
 
+    # Precompute emissions for t=1..T-1 (time-major) and validity mask
     ems = potentials[:, 1:, :]     # [B, T-1, N]
     ems_tm = K.transpose(ems, (1, 0, 2))  # [T-1, B, N]
 
-    # Per-step validity mask: valid when t < lens, for t = 1..T-1
     time_idx = K.arange(T)  # [T]
     valid_bt = (K.expand_dims(time_idx, 0) < K.expand_dims(lens, -1))  # [B, T]
-    valid_bt = valid_bt[:, 1:]  # [B, T-1]
-    valid_tm = K.transpose(valid_bt, (1, 0))  # [T-1, B]
+    valid_tm = K.transpose(valid_bt[:, 1:], (1, 0))  # [T-1, B]
 
-    def step(alphas, inputs):
-        emit_t, valid_t = inputs  # emit_t: [B,N], valid_t: [B]
-        prev = K.expand_dims(alphas, 2)  # [B, N, 1]
-        scores = prev + trans_e          # [B, N, N]
-        new_alphas = K.logsumexp(scores, axis=1) + emit_t  # [B, N]
-        alphas = K.where(K.expand_dims(valid_t, -1), new_alphas, alphas)
-        return alphas, new_alphas
-
-    alphasT, _ = K.scan(step, alphas0, xs=(ems_tm, valid_tm))
-    return K.logsumexp(alphasT, axis=-1)  # [B]
+    if bk == "tensorflow":
+        # Loop from t=1..T-1 using while_loop and gather via take()
+        def cond(t, alphas):
+            return t < (T - K.ones_like(T))
+        def body(t, alphas):  # t counts number of steps processed so far in 1..T-1
+            emit_t = K.take(ems_tm, t, axis=0)     # [B, N]
+            valid_t = K.take(valid_tm, t, axis=0)  # [B]
+            prev = K.expand_dims(alphas, 2)
+            scores = prev + trans_e
+            new_alphas = K.logsumexp(scores, axis=1) + emit_t
+            alphas = K.where(K.expand_dims(valid_t, -1), new_alphas, alphas)
+            return (t + 1, alphas)
+        t0 = K.zeros((), dtype="int32")
+        _, alphasT = K.while_loop(cond, body, (t0, alphas0))
+        return K.logsumexp(alphasT, axis=-1)
+    else:
+        # Use scan for JAX and Torch
+        def step(alphas, inputs):
+            emit_t, valid_t = inputs  # [B,N], [B]
+            prev = K.expand_dims(alphas, 2)  # [B, N, 1]
+            scores = prev + trans_e          # [B, N, N]
+            new_alphas = K.logsumexp(scores, axis=1) + emit_t  # [B, N]
+            alphas = K.where(K.expand_dims(valid_t, -1), new_alphas, alphas)
+            return alphas, new_alphas
+        alphasT, _ = K.scan(step, alphas0, xs=(ems_tm, valid_tm))
+        return K.logsumexp(alphasT, axis=-1)
 
 
 def crf_log_likelihood(potentials, tags, lens, trans):

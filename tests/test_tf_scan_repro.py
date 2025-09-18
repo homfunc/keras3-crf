@@ -44,17 +44,7 @@ def test_graph_scan_dynamic_time_training_step_backend_agnostic():
                 ytrue = np.zeros((B,), dtype="float32")
                 yield (x, y), ytrue
 
-    # Under TF backend this is expected to fail today (known K.scan graph issue). For other backends it should pass.
-    if BACKEND == "tensorflow":
-        with pytest.raises(Exception):
-            model.fit(gen_np(), epochs=1, steps_per_epoch=4, verbose=0)
-    else:
-        # JAX backend: warm-up build with one real batch to avoid fragile auto-build
-        if BACKEND == "jax":
-            import numpy as _np
-            x0 = _np.zeros((B, 1, F), dtype="float32")
-            y0 = _np.zeros((B, 1), dtype="int32")
-            # Force build without engaging trainer's output-spec tracing
-            model.predict((x0, y0), verbose=0)
-        history = model.fit(gen_np(), epochs=1, steps_per_epoch=4, verbose=0)
-        assert history is not None
+    # Previously TF graph mode had a scan issue for dynamic time. This has been fixed
+    # in crf_log_norm by using a TF-while_loop; training should now proceed on TF too.
+    history = model.fit(gen_np(), epochs=1, steps_per_epoch=4, verbose=0)
+    assert history is not None
