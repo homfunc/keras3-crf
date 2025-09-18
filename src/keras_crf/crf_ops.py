@@ -181,8 +181,9 @@ def crf_decode(potentials, lens, trans):
 
 
 def crf_filtered_inputs(potentials, tag_bitmap):
-    # Replace disallowed positions with -inf to strictly forbid them (matches tests)
-    neg_inf = K.convert_to_tensor(-1.0, dtype=potentials.dtype) / K.convert_to_tensor(0.0, dtype=potentials.dtype)
+    # Replace disallowed positions with a large negative constant to strictly forbid them
+    # without relying on undefined divide-by-zero behavior that can upset some compilers.
+    neg_inf = K.convert_to_tensor(-1e30, dtype=potentials.dtype)
     fill = K.zeros_like(potentials) + neg_inf
     return K.where(tag_bitmap, potentials, fill)
 

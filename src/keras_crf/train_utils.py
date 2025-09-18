@@ -114,12 +114,11 @@ def make_crf_tagger(tokens_input,
 
     # Name outputs to align with compile/loss/metrics dict keys
     decoded_named = _Identity(name="decoded_output")(decoded)
-    # For backward compatibility, keep the output name 'crf_log_likelihood_output'
-    loss_named = keras.layers.Lambda(lambda z: z, name="crf_log_likelihood_output")(loss_head)
+    loss_named = keras.layers.Lambda(lambda z: z, name="crf_loss_output")(loss_head)
 
     model = keras.Model(
         inputs={"tokens": tokens_named, "labels": labels},
-        outputs={"decoded_output": decoded_named, "crf_log_likelihood_output": loss_named},
+        outputs={"decoded_output": decoded_named, "crf_loss_output": loss_named},
     )
 
     def zero_loss(y_true, y_pred):
@@ -127,7 +126,7 @@ def make_crf_tagger(tokens_input,
 
     model.compile(
         optimizer=optimizer or keras.optimizers.Adam(1e-3),
-        loss={"decoded_output": zero_loss, "crf_log_likelihood_output": lambda y_true, y_pred: K.mean(y_pred)},
+        loss={"decoded_output": zero_loss, "crf_loss_output": lambda y_true, y_pred: K.mean(y_pred)},
         metrics={"decoded_output": metrics or []},
     )
     return model
@@ -148,6 +147,6 @@ def prepare_crf_targets(y_true, mask=None):
     y_dummy = np.zeros((B,), dtype=np.float32)
     sw_dummy = np.ones((B,), dtype=np.float32)
     sw_decoded = mask.astype(np.float32) if mask is not None else np.ones_like(y_true, dtype=np.float32)
-    y_dict = {"decoded_output": y_true, "crf_log_likelihood_output": y_dummy}
-    sw_dict = {"decoded_output": sw_decoded, "crf_log_likelihood_output": sw_dummy}
+    y_dict = {"decoded_output": y_true, "crf_loss_output": y_dummy}
+    sw_dict = {"decoded_output": sw_decoded, "crf_loss_output": sw_dummy}
     return y_dict, sw_dict
