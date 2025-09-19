@@ -11,99 +11,134 @@ import keras
 from keras import layers, ops as K
 
 from keras_crf.layers import CRF
-from keras_crf.crf_ops import crf_log_likelihood, crf_marginals
+from keras_crf.losses import nll_loss as crf_nll_loss, dice_loss as crf_dice_loss, joint_dice_nll_loss as crf_joint_loss
 from examples.utils.data import read_conll, build_maps, encode_and_pad, make_varlen_dataset
 from examples.utils.metrics import MaskedTokenAccuracy
 from examples.utils.ner_metrics import EntityF1
 
 
+@keras.saving.register_keras_serializable(package="examples", name="BiLSTMCRF")
+class BiLSTMCRF(keras.Model):
+    def __init__(self,
+                 num_tags:int,
+                 vocab_size:int,
+                 embedding_dim:int,
+                 lstm_units:int,
+                 loss_choice:str,
+                 dice_smooth:float,
+                 joint_nll_weight:float|None):
+        super().__init__(name="bilstm_crf_manual")
+        self.num_tags = int(num_tags)
+        self.vocab_size = int(vocab_size)
+        self.embedding_dim = int(embedding_dim)
+        self.lstm_units = int(lstm_units)
+        self.embed = layers.Embedding(self.vocab_size + 1, self.embedding_dim, mask_zero=True)
+        self.bilstm = layers.Bidirectional(layers.LSTM(self.lstm_units, return_sequences=True))
+        self.crf = CRF(self.num_tags)
+        self.loss_choice = loss_choice
+        self.dice_smooth = float(dice_smooth)
+        self.joint_alpha = 0.2 if joint_nll_weight is None else float(joint_nll_weight)
+    def call(self, tokens):
+        x = self.embed(tokens)
+        x = self.bilstm(x)
+        decoded, potentials, lens, trans = self.crf(x)
+        # Cache tensors for compute_loss (avoid storing variables at model root)
+        self._last = (potentials, lens, decoded)
+        return decoded
+    def compute_output_shape(self, input_shape):
+        # input_shape: (batch, time)
+        try:
+            B, T = input_shape
+        except Exception:
+            B, T = None, None
+        return (B, T)
+    def compute_output_spec(self, inputs, batch_size=None, dtype=None):
+        # Output is integer tag ids with shape (batch, time)
+        if isinstance(inputs, (list, tuple)):
+            inp = inputs[0]
+        else:
+            inp = inputs
+        shp = getattr(inp, "shape", None)
+        if shp is not None:
+            B = shp[0]
+            T = shp[1]
+        else:
+            B, T = None, None
+        return keras.KerasTensorSpec(shape=(B, T), dtype="int32")
+    def compute_loss(self, x=None, y=None, y_pred=None, sample_weight=None):
+        cache = getattr(self, "_last", (None, None, None))
+        pot, lens, decoded = cache
+        if pot is None:
+            # ensure forward
+            decoded = self(x, training=True)
+            pot, lens, decoded = self._last
+        y_true = y
+        trans = self.crf.trans
+        if self.loss_choice == "nll":
+            loss = crf_nll_loss(pot, lens, trans, y_true, sample_weight=sample_weight, reduction="mean")
+        elif self.loss_choice == "dice":
+            loss = crf_dice_loss(pot, lens, trans, y_true, smooth=self.dice_smooth, reduction="mean")
+        else:
+            loss = crf_joint_loss(pot, lens, trans, y_true, alpha=self.joint_alpha, smooth=self.dice_smooth, reduction="mean")
+        return loss
+    def get_config(self):
+        return {
+            "num_tags": self.num_tags,
+            "vocab_size": self.vocab_size,
+            "embedding_dim": self.embedding_dim,
+            "lstm_units": self.lstm_units,
+            "loss_choice": self.loss_choice,
+            "dice_smooth": float(self.dice_smooth),
+            "joint_nll_weight": float(self.joint_alpha),
+        }
+    @classmethod
+    def from_config(cls, cfg):
+        return cls(
+            num_tags=int(cfg.get("num_tags")),
+            vocab_size=int(cfg.get("vocab_size")),
+            embedding_dim=int(cfg.get("embedding_dim")),
+            lstm_units=int(cfg.get("lstm_units")),
+            loss_choice=str(cfg.get("loss_choice")),
+            dice_smooth=float(cfg.get("dice_smooth", 1.0)),
+            joint_nll_weight=float(cfg.get("joint_nll_weight", 0.2)),
+        )
+    def get_build_config(self):
+        return {"input_specs": [{"name": "tokens", "dtype": "int32", "shape": (None,)}]}
+    def build_from_config(self, cfg):
+        # Build sublayers eagerly without tracing CRF decode.
+        # This creates variables so that weights can be loaded, while avoiding a forward pass.
+        emb_in_shape = (None, None)  # (batch, time) int32
+        lstm_in_shape = (None, None, self.embedding_dim)
+        crf_proj_in_shape = (None, None, 2 * self.lstm_units)
+        crf_in_shape = (None, None, self.num_tags)
+        # Build embedding, BiLSTM, and CRF projection + transition variables
+        self.embed.build(emb_in_shape)
+        self.bilstm.build(lstm_in_shape)
+        if getattr(self.crf, "proj", None) is not None:
+            self.crf.proj.build(crf_proj_in_shape)
+        self.crf.build(crf_in_shape)
+        self.built = True
+
+
 def build_bilstm_crf_manual(num_tags: int,
-                            vocab_size: int,
-                            embedding_dim: int = 64,
-                            lstm_units: int = 64,
-                            loss: str = "nll",
-                            dice_smooth: float = 1.0,
-                            joint_nll_weight: float = None):
-    """Build a BiLSTM + CRF model manually without train_utils.
+                           vocab_size: int,
+                           embedding_dim: int = 64,
+                           lstm_units: int = 64,
+                           loss: str = "nll",
+                           dice_smooth: float = 1.0,
+                           joint_nll_weight: float = None):
+    """Build a BiLSTM + CRF model using a Keras Model subclass with compute_loss.
 
-    Demonstrates how to:
-      - attach CRF,
-      - create a custom loss head (NLL, Dice, or joint),
-      - expose a decoded output for metrics.
+    This avoids symbolic graph-time execution of CRF ops and keeps things backend-agnostic.
     """
-    tokens_in = keras.Input(shape=(None,), dtype="int32", name="tokens")
-    x = layers.Embedding(vocab_size + 1, embedding_dim, mask_zero=True)(tokens_in)
-    x = layers.Bidirectional(layers.LSTM(lstm_units, return_sequences=True))(x)
-
-    crf = CRF(num_tags)
-    decoded, potentials, lens, trans = crf(x)
-
-    labels = keras.Input(shape=(None,), dtype="int32", name="labels")
-
-    # Loss heads
-    class NLL(keras.layers.Layer):
-        def call(self, inputs):
-            pot, y_true, ln, tr = inputs
-            return -crf_log_likelihood(pot, y_true, ln, tr)
-
-    class DiceLoss(keras.layers.Layer):
-        def __init__(self, num_tags: int, smooth: float = 1.0, **kw):
-            super().__init__(**kw)
-            self.num_tags = num_tags
-            self.smooth = smooth
-        def call(self, inputs):
-            pot, y_true, ln, tr = inputs
-            T = K.shape(pot)[1]
-            probs = crf_marginals(pot, ln, tr)
-            y_oh = K.one_hot(K.cast(y_true, "int32"), self.num_tags)
-            y_oh = K.cast(y_oh, probs.dtype)
-            time_idx = K.cast(K.arange(T), "int32")
-            mask = K.expand_dims(time_idx, 0) < K.expand_dims(K.cast(ln, "int32"), -1)
-            mask = K.cast(mask, probs.dtype)
-            mask = K.expand_dims(mask, -1)
-            y_oh_m = y_oh * mask
-            probs_m = probs * mask
-            inter = K.sum(y_oh_m * probs_m, axis=(1, 2))
-            sums = K.sum(y_oh_m, axis=(1, 2)) + K.sum(probs_m, axis=(1, 2))
-            dice = (2.0 * inter + self.smooth) / (sums + self.smooth)
-            return 1.0 - dice
-
-    nll = NLL()([potentials, labels, lens, trans])
     loss_choice = (loss or "nll").lower()
-    if loss_choice == "nll":
-        loss_vec = nll
-    elif loss_choice == "dice":
-        d = DiceLoss(num_tags, smooth=dice_smooth)([potentials, labels, lens, trans])
-        loss_vec = d
-    elif loss_choice in ("dice+nll", "joint"):
-        alpha = 0.2 if joint_nll_weight is None else float(joint_nll_weight)
-        d = DiceLoss(num_tags, smooth=dice_smooth)([potentials, labels, lens, trans])
-        loss_vec = keras.layers.Lambda(lambda zs: alpha * zs[0] + (1.0 - alpha) * zs[1])([nll, d])
-    else:
-        raise ValueError(f"Unsupported loss: {loss}")
 
-    class _Identity(keras.layers.Layer):
-        def __init__(self, **kw):
-            super().__init__(**kw)
-            self.supports_masking = True
-        def call(self, x):
-            return x
-    decoded_out = _Identity(name="decoded_output")(decoded)
-    loss_out = keras.layers.Lambda(lambda z: z, name="crf_log_likelihood_output")(loss_vec)
-
-    model = keras.Model(inputs={"tokens": tokens_in, "labels": labels}, outputs={"decoded_output": decoded_out, "crf_log_likelihood_output": loss_out})
-
-    def zero_loss(y_true, y_pred):
-        return K.mean(K.zeros_like(y_pred[..., :1]))
-
-    model.compile(
-        optimizer=keras.optimizers.Adam(1e-3),
-        loss={"decoded_output": zero_loss, "crf_log_likelihood_output": lambda yt, yp: K.mean(yp)},
-        metrics={"decoded_output": [MaskedTokenAccuracy()]},
-    )
-    # Also return a separate inference model
-    infer_model = keras.Model(tokens_in, decoded_out)
-    return model, infer_model
+    model = BiLSTMCRF(num_tags, vocab_size, embedding_dim, lstm_units, loss_choice, dice_smooth, joint_nll_weight)
+    # Compile with optimizer and metric on decoded output
+    model.compile(optimizer=keras.optimizers.Adam(1e-3),
+                  metrics=[MaskedTokenAccuracy()])
+    # Inference model is simply the same model (it returns decoded tags)
+    return model, model
 
 
 def parse_args():
@@ -154,16 +189,9 @@ def main():
     model, infer = build_bilstm_crf_manual(num_tags, vocab_size, a.embedding_dim, a.lstm_units, a.loss, a.dice_smooth, a.joint_nll_weight)
 
     # Prepare targets and masks
-    mask_train = (X_train != 0).astype(np.float32)
-    y_train = {"decoded_output": Y_train, "crf_log_likelihood_output": np.zeros((X_train.shape[0],), dtype=np.float32)}
-    sw_train = {"decoded_output": mask_train, "crf_log_likelihood_output": np.ones((X_train.shape[0],), dtype=np.float32)}
-
-    mask_val = (X_val != 0).astype(np.float32)
-    y_val = {"decoded_output": Y_val, "crf_log_likelihood_output": np.zeros((X_val.shape[0],), dtype=np.float32)}
-    sw_val = {"decoded_output": mask_val, "crf_log_likelihood_output": np.ones((X_val.shape[0],), dtype=np.float32)}
-
-    model.fit({"tokens": X_train, "labels": Y_train}, y_train, sample_weight=sw_train,
-              validation_data=({"tokens": X_val, "labels": Y_val}, y_val, sw_val),
+    # Train directly on the subclassed model: inputs are tokens, targets are labels
+    model.fit(X_train, Y_train,
+              validation_data=(X_val, Y_val),
               epochs=a.epochs, batch_size=a.batch_size, verbose=2)
 
     # Evaluation
@@ -171,6 +199,20 @@ def main():
     mask = (X_test != 0)
     acc = (decoded[mask] == Y_test[mask]).mean()
     print(f"Masked token accuracy on test: {acc:.4f}")
+
+    # Save and reload roundtrip assertions
+    out_dir = os.path.join(os.path.dirname(__file__), 'out')
+    os.makedirs(out_dir, exist_ok=True)
+    keras_path = os.path.join(out_dir, 'bilstm_crf_manual.keras')
+    infer.save(keras_path)
+    loaded = keras.models.load_model(keras_path)
+    decoded2 = loaded.predict(X_test, batch_size=a.batch_size, verbose=0)
+    assert decoded2.shape == decoded.shape, f"Loaded decoded shape mismatch: {decoded2.shape} vs {decoded.shape}"
+    # Exact match should hold with deterministic decode
+    if not np.array_equal(decoded2, decoded):
+        diff = np.mean(decoded2 != decoded)
+        raise AssertionError(f"Reloaded predictions differ from original: mismatch rate {diff:.4f}")
+    print("Roundtrip save/load OK; predictions identical.")
 
     if id2tag is not None:
         ent_f1 = EntityF1(id2tag)

@@ -35,6 +35,11 @@ def _parse_backend_posarg(posargs: list[str]) -> tuple[str | None, list[str]]:
     for arg in posargs:
         if arg.startswith("backend="):
             requested = arg.split("=", 1)[1].strip()
+            if requested not in BACKEND_EXTRAS:
+                session.error(
+                    f"Unknown backend '{requested}'. Valid: {list(BACKEND_EXTRAS)}. "
+                    f"Try a different backend (backend=jax|tensorflow|torch)."
+                )
         else:
             passthrough.append(arg)
     return requested, passthrough
@@ -56,7 +61,9 @@ def _install_backend(session: nox.Session, backend: str) -> bool:
         return False
 
 
-@nox.session(python=["3.9", "3.10", "3.11", "3.12", "3.13"])
+@nox.session(reuse_venv=True,
+             venv_backend='micromamba|mamba|conda|virtualenv',
+             python=["3.9", "3.10", "3.11", "3.12", "3.13"])
 def tests(session: nox.Session) -> None:
     requested, passthrough = _parse_backend_posarg(session.posargs)
 
@@ -88,7 +95,9 @@ def tests(session: nox.Session) -> None:
     session.run("pytest", "-q", *passthrough)
 
 
-@nox.session(python=["3.9", "3.10", "3.11", "3.12", "3.13"])
+@nox.session(reuse_venv=True,
+             venv_backend='micromamba|mamba|conda|virtualenv',
+             python=["3.9", "3.10", "3.11", "3.12", "3.13"])
 def quickstarts(session: nox.Session) -> None:
     """Run the backend-specific quickstart scripts in examples/ as a smoke test."""
     requested, _ = _parse_backend_posarg(session.posargs)
@@ -122,4 +131,33 @@ def quickstarts(session: nox.Session) -> None:
         session.run("python", "examples/quickstart_tf.py")
     else:
         session.error(f"Unsupported backend '{backend}' for quickstarts.")
+
+
+@nox.session(name="clean")
+def clean(session: nox.Session) -> None:
+    """Remove local build/test artifacts and nox virtualenvs.
+
+    Usage:
+        nox -s clean
+    """
+    import shutil
+    import glob
+    import os
+
+    # Paths/directories to remove
+    paths = [
+        ".nox",
+        ".pytest_cache",
+        "build",
+        "dist",
+    ]
+
+    for p in paths:
+        session.log(f"Removing {p} ...")
+        shutil.rmtree(p, ignore_errors=True)
+
+    # Remove any egg-info directories
+    for egg in glob.glob("*.egg-info"):
+        session.log(f"Removing {egg} ...")
+        shutil.rmtree(egg, ignore_errors=True)
 

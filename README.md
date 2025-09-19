@@ -65,7 +65,6 @@ decoded = model.get_layer('decoded_output').output  # or use a separate inferenc
 
 Notes
 - Backend-agnostic via Keras 3 universal ops: runs with TensorFlow, Torch, or JAX backends.
-- Eager-first. Validated primarily in eager mode; works with Keras Model/fit across backends. TF graph mode (tf.function) is supported only for the legacy TF ops in `keras_crf.text`.
 - Masking requires right-padding (ones for valid timesteps followed by zeros). Left-padding is not supported.
 - Decode padding: positions beyond the true sequence length are deterministically filled by copying the last valid tag.
 - Single-timestep sequences (time == 1): decode is argmax at t=0; log-likelihood reduces to the unary term minus logsumexp.
@@ -100,7 +99,7 @@ Notes:
 
 Installation
 - Python >= 3.9 supported.
-- From PyPI: pip install keras3-crf
+- From PyPI: pip install keras3-crf[dev,test,tensorflow,torch,jax]
 - From source (editable): pip install -e .
 
 Testing
@@ -110,11 +109,16 @@ pytest -q tests
 
 Development and testing with nox
 - Install dev tools (includes nox):
-  - pip install -e .[dev]
+```bash
+pip install -e .[dev]
+```
 - Run tests across a backend with nox (auto-installs that backend extra in a session venv):
-  - nox -s tests -- backend=jax   # or tensorflow | torch
+```bash
+nox -s tests -- backend=jax   # or tensorflow | torch
+```
 - Run example quickstarts via nox:
-  - nox -s quickstarts -- backend=jax
+```bash
+nox -s quickstarts -- backend=jax
 
 Backend snippets
 - See `examples/torch_jax_snippet.md` for a minimal Torch/JAX example using the CRF layer with Keras 3 universal ops.
